@@ -1,0 +1,144 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "dd-trace: Node.js APM Tracer",
+  "projectDescription": "Datadog's official APM tracing library for Node.js that automatically instruments popular frameworks and libraries to capture distributed traces, metrics, logs, and security events.",
+  "theme": "linden",
+  "primaryColor": "#7341af",
+  "lightColor": "#baa0d7",
+  "darkColor": "#e4daef",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/tracing",
+              "concepts/spans",
+              "concepts/sampling",
+              "concepts/propagation"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/options",
+              "configuration/environment-variables",
+              "configuration/plugins"
+            ]
+          },
+          {
+            "group": "Integrations",
+            "pages": [
+              "integrations/overview",
+              "integrations/web-frameworks",
+              "integrations/databases",
+              "integrations/message-queues",
+              "integrations/ai-ml"
+            ]
+          },
+          {
+            "group": "Advanced Features",
+            "pages": [
+              "features/appsec",
+              "features/profiling",
+              "features/llm-observability",
+              "features/data-streams",
+              "features/dynamic-instrumentation",
+              "features/opentelemetry"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/custom-instrumentation",
+              "guides/log-correlation",
+              "guides/esm-support",
+              "guides/serverless",
+              "guides/bundling"
+            ]
+          },
+          {
+            "group": "Migration",
+            "pages": [
+              "migration/overview",
+              "migration/v4-to-v5"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Tracer",
+            "pages": [
+              "api/tracer",
+              "api/span",
+              "api/span-context",
+              "api/scope"
+            ]
+          },
+          {
+            "group": "Products",
+            "pages": [
+              "api/appsec",
+              "api/llmobs",
+              "api/dogstatsd",
+              "api/data-streams",
+              "api/aiguard"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "api/tracer-options",
+              "api/plugin-options"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Automatic instrumentation of 100+ Node.js libraries and frameworks via plugin system",
+    "Distributed tracing with context propagation across services",
+    "Application Security Monitoring (AppSec) with WAF and RASP",
+    "LLM Observability for AI/ML applications (OpenAI, Anthropic, LangChain, etc.)",
+    "Continuous Profiler for CPU and memory profiling",
+    "Data Streams Monitoring for Kafka, SQS, and other message queues",
+    "Dynamic Instrumentation (Live Debugging) without redeployment",
+    "OpenTelemetry compatibility for vendor-neutral instrumentation",
+    "Runtime metrics collection (GC, event loop, heap)",
+    "Log injection for trace-to-log correlation"
+  ],
+  "publicApiSurface": [
+    "tracer.init(options)",
+    "tracer.trace(name, fn)",
+    "tracer.wrap(name, fn)",
+    "tracer.startSpan(name, options)",
+    "tracer.inject(spanContext, format, carrier)",
+    "tracer.extract(format, carrier)",
+    "tracer.scope()",
+    "tracer.use(plugin, config)",
+    "tracer.setUser(user)",
+    "tracer.appsec",
+    "tracer.llmobs",
+    "tracer.dogstatsd",
+    "tracer.dataStreamsCheckpointer",
+    "tracer.aiguard",
+    "tracer.setBaggageItem(key, value)",
+    "tracer.getBaggageItem(key)",
+    "tracer.getAllBaggageItems()",
+    "tracer.removeBaggageItem(key)"
+  ]
+}
