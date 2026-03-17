@@ -1,0 +1,448 @@
+---
+title: "AI & ML integrations"
+description: "Automatic tracing for OpenAI, Anthropic, LangChain, LangGraph, Google Vertex AI, Google GenAI, and AWS Bedrock."
+keywords: ["openai", "anthropic", "langchain", "langgraph", "vertex ai", "bedrock", "llm tracing", "llm observability", "ai tracing"]
+---
+
+# AI & ML integrations
+
+dd-trace automatically instruments popular AI and LLM libraries to capture requests, responses, token usage, model names, and latency. These integrations work alongside [LLM Observability](https://docs.datadoghq.com/llm_observability/) to give you deep visibility into your AI-powered applications.
+
+## What is traced
+
+For each AI library call, dd-trace captures:
+
+- **Model name** — which model was used (e.g. `gpt-4o`, `claude-3-5-sonnet-20241022`)
+- **Request parameters** — prompt or messages passed to the model
+- **Response content** — completions, embeddings, or tool call results
+- **Token usage** — prompt tokens, completion tokens, and total tokens
+- **Latency** — total request duration
+- **Errors** — rate limit errors, API errors, and timeouts
+
+## LLM Observability
+
+The AI integrations are the foundation for [LLM Observability](https://docs.datadoghq.com/llm_observability/). When you enable `llmobs`, dd-trace enriches spans with structured input/output data and routes them to the LLM Observability product in Datadog.
+
+Enable LLM Observability alongside tracing:
+
+```javascript
+const tracer = require('dd-trace').init({
+  llmobs: {
+    mlApp: 'my-llm-app'
+  }
+})
+```
+
+Or use environment variables:
+
+```bash
+DD_LLMOBS_ENABLED=true
+DD_LLMOBS_ML_APP=my-llm-app
+```
+
+---
+
+## OpenAI
+
+The `openai` plugin instruments the [openai](https://www.npmjs.com/package/openai) Node.js SDK for all API operations including chat completions, embeddings, image generation, fine-tuning, and more.
+
+**npm package:** `openai`
+
+### Enable
+
+```javascript
+const tracer = require('dd-trace').init()
+
+const OpenAI = require('openai')
+```
+
+<Note>
+For log sampling to work you need to set the `DD_API_KEY` environment variable and ensure your firewall allows traffic to `http-intake.logs.datadoghq.com`.
+
+For metrics (token counts, rate limits), you need [DogStatsD](https://docs.datadoghq.com/developers/dogstatsd/) enabled in the Agent.
+</Note>
+
+### Configuration
+
+```javascript
+tracer.use('openai', {
+  service: 'openai-client'
+})
+```
+
+### Example: chat completion
+
+```javascript
+const openai = new OpenAI()
+
+// Automatically traced
+const completion = await openai.chat.completions.create({
+  model: 'gpt-4o',
+  messages: [
+    { role: 'system', content: 'You are a helpful assistant.' },
+    { role: 'user', content: 'Summarize the benefits of distributed tracing.' }
+  ]
+})
+
+console.log(completion.choices[0].message.content)
+```
+
+### Example: embeddings
+
+```javascript
+const embedding = await openai.embeddings.create({
+  model: 'text-embedding-3-small',
+  input: 'The quick brown fox'
+})
+```
+
+### Span tags
+
+| Tag | Description |
+|---|---|
+| `openai.request.model` | Model name from the request |
+| `openai.request.endpoint` | API endpoint path |
+| `openai.request.method` | HTTP method |
+| `openai.response.model` | Model name from the response (may differ from request) |
+| `openai.response.usage.prompt_tokens` | Prompt token count |
+| `openai.response.usage.completion_tokens` | Completion token count |
+| `openai.response.usage.total_tokens` | Total token count |
+| `openai.response.id` | Response object ID |
+
+### Metrics emitted
+
+| Metric | Description |
+|---|---|
+| `openai.request.duration` | Request duration in milliseconds |
+| `openai.request.error` | Error count |
+| `openai.tokens.prompt` | Prompt tokens used |
+| `openai.tokens.completion` | Completion tokens used |
+| `openai.tokens.total` | Total tokens used |
+| `openai.ratelimit.requests` | Rate limit for requests |
+| `openai.ratelimit.tokens` | Rate limit for tokens |
+
+---
+
+## Anthropic
+
+The `anthropic` plugin instruments the [@anthropic-ai/sdk](https://www.npmjs.com/package/@anthropic-ai/sdk) Node.js SDK for messages and streaming calls.
+
+**npm package:** `@anthropic-ai/sdk`
+
+### Enable
+
+```javascript
+const tracer = require('dd-trace').init()
+
+const Anthropic = require('@anthropic-ai/sdk')
+```
+
+### Configuration
+
+```javascript
+tracer.use('anthropic', {
+  service: 'anthropic-client'
+})
+```
+
+### Example
+
+```javascript
+const client = new Anthropic()
+
+// Automatically traced
+const message = await client.messages.create({
+  model: 'claude-3-5-sonnet-20241022',
+  max_tokens: 1024,
+  messages: [
+    { role: 'user', content: 'What are the key principles of observability?' }
+  ]
+})
+
+console.log(message.content[0].text)
+```
+
+---
+
+## LangChain
+
+The `langchain` plugin instruments [@langchain/core](https://www.npmjs.com/package/@langchain/core) operations including chains, LLM calls, chat model calls, embeddings, tool invocations, and vector store similarity searches.
+
+**npm package:** `@langchain/core`
+
+### Enable
+
+```javascript
+const tracer = require('dd-trace').init()
+
+const { ChatOpenAI } = require('@langchain/openai')
+const { HumanMessage } = require('@langchain/core/messages')
+```
+
+### Configuration
+
+```javascript
+tracer.use('langchain', {
+  service: 'langchain-app'
+})
+```
+
+### Example: chat model call
+
+```javascript
+const model = new ChatOpenAI({ model: 'gpt-4o' })
+
+// Automatically traced as a langchain.request span
+const response = await model.invoke([
+  new HumanMessage('Explain the difference between tracing and logging.')
+])
+
+console.log(response.content)
+```
+
+### Example: chain invocation
+
+```javascript
+const { ChatPromptTemplate } = require('@langchain/core/prompts')
+const { RunnableSequence } = require('@langchain/core/runnables')
+const { StringOutputParser } = require('@langchain/core/output_parsers')
+
+const prompt = ChatPromptTemplate.fromTemplate('Tell me about {topic} in one sentence.')
+const outputParser = new StringOutputParser()
+
+const chain = RunnableSequence.from([prompt, model, outputParser])
+
+// Each step creates a child langchain.request span
+const result = await chain.invoke({ topic: 'distributed tracing' })
+```
+
+### Example: embeddings
+
+```javascript
+const { OpenAIEmbeddings } = require('@langchain/openai')
+
+const embeddings = new OpenAIEmbeddings()
+
+// Automatically traced
+const vector = await embeddings.embedQuery('What is APM?')
+```
+
+### Span tags
+
+| Tag | Description |
+|---|---|
+| `langchain.request.model` | Model name (when available) |
+| `langchain.request.provider` | Provider (e.g. `openai`, `anthropic`) |
+| `langchain.request.type` | Operation type: `chain`, `chat_model`, `llm`, `embedding`, `tool` |
+| `resource.name` | Dot-separated namespace and class name (e.g. `langchain.chat_models.openai.ChatOpenAI`) |
+| `span.type` | Always `openai` (via underlying provider) |
+
+### Traced operation types
+
+| LangChain type | What is traced |
+|---|---|
+| `chain` | `RunnableSequence.invoke()`, `RunnableSequence.batch()` |
+| `chat_model` | `BaseChatModel.generate()` |
+| `llm` | `BaseLLM.generate()` |
+| `embedding` | `Embeddings.embedQuery()`, `Embeddings.embedDocuments()` |
+| `tool` | `Tool.invoke()` |
+| `similarity_search` | `VectorStore.similaritySearch()`, `VectorStore.similaritySearchWithScore()` |
+
+---
+
+## LangGraph
+
+The `langgraph` plugin instruments [@langchain/langgraph](https://www.npmjs.com/package/@langchain/langgraph) agent graph executions.
+
+**npm package:** `@langchain/langgraph`
+
+### Enable
+
+```javascript
+const tracer = require('dd-trace').init()
+
+const { StateGraph } = require('@langchain/langgraph')
+const { Annotation } = require('@langchain/langgraph')
+```
+
+### Configuration
+
+```javascript
+tracer.use('langgraph', {
+  service: 'langgraph-agent'
+})
+```
+
+### Example
+
+```javascript
+const StateAnnotation = Annotation.Root({
+  messages: Annotation({ reducer: (a, b) => a.concat(b) })
+})
+
+const graph = new StateGraph(StateAnnotation)
+  .addNode('agent', async state => {
+    const response = await model.invoke(state.messages)
+    return { messages: [response] }
+  })
+  .addEdge('__start__', 'agent')
+  .addEdge('agent', '__end__')
+  .compile()
+
+// Graph execution is automatically traced
+const result = await graph.invoke({
+  messages: [new HumanMessage('What is the capital of France?')]
+})
+```
+
+---
+
+## Google Cloud Vertex AI
+
+The `google-cloud-vertexai` plugin instruments the [@google-cloud/vertexai](https://www.npmjs.com/package/@google-cloud/vertexai) SDK for Gemini model calls.
+
+**npm package:** `@google-cloud/vertexai`
+
+### Enable
+
+```javascript
+const tracer = require('dd-trace').init()
+
+const { VertexAI } = require('@google-cloud/vertexai')
+```
+
+### Example
+
+```javascript
+const vertexAI = new VertexAI({
+  project: 'my-gcp-project',
+  location: 'us-central1'
+})
+
+const model = vertexAI.getGenerativeModel({ model: 'gemini-1.5-pro' })
+
+// Automatically traced
+const result = await model.generateContent('Explain observability in three sentences.')
+console.log(result.response.candidates[0].content.parts[0].text)
+```
+
+---
+
+## Google GenAI
+
+The `google-genai` plugin instruments the [@google/genai](https://www.npmjs.com/package/@google/genai) SDK.
+
+**npm package:** `@google/genai`
+
+### Enable
+
+```javascript
+const tracer = require('dd-trace').init()
+
+const { GoogleGenerativeAI } = require('@google/generative-ai')
+```
+
+### Example
+
+```javascript
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
+const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' })
+
+// Automatically traced
+const result = await model.generateContent('What is distributed tracing?')
+console.log(result.response.text())
+```
+
+---
+
+## AWS Bedrock (aws-sdk)
+
+AWS Bedrock is instrumented through the `aws-sdk` plugin, which supports both AWS SDK v2 and v3. The plugin traces `InvokeModel` and `InvokeModelWithResponseStream` calls.
+
+**npm packages:** `@aws-sdk/client-bedrock-runtime`
+
+### Enable
+
+```javascript
+const tracer = require('dd-trace').init()
+
+const { BedrockRuntimeClient, InvokeModelCommand } = require('@aws-sdk/client-bedrock-runtime')
+```
+
+### Configuration
+
+```javascript
+tracer.use('aws-sdk', {
+  bedrockruntime: { enabled: true }
+})
+```
+
+### Example
+
+```javascript
+const client = new BedrockRuntimeClient({ region: 'us-east-1' })
+
+const payload = {
+  anthropic_version: 'bedrock-2023-05-31',
+  max_tokens: 512,
+  messages: [
+    { role: 'user', content: 'Describe the benefits of APM in two sentences.' }
+  ]
+}
+
+// Automatically traced
+const command = new InvokeModelCommand({
+  modelId: 'anthropic.claude-3-5-sonnet-20241022-v2:0',
+  body: JSON.stringify(payload),
+  contentType: 'application/json',
+  accept: 'application/json'
+})
+
+const response = await client.send(command)
+const body = JSON.parse(new TextDecoder().decode(response.body))
+console.log(body.content[0].text)
+```
+
+---
+
+## Vercel AI SDK
+
+The `ai` plugin instruments the [Vercel AI SDK](https://ai-sdk.dev/docs/introduction).
+
+**npm package:** `ai`
+
+### Enable
+
+```javascript
+const tracer = require('dd-trace').init()
+
+const { generateText } = require('ai')
+const { openai } = require('@ai-sdk/openai')
+```
+
+### Example
+
+```javascript
+// Automatically traced
+const { text } = await generateText({
+  model: openai('gpt-4o'),
+  prompt: 'Explain span sampling in one paragraph.'
+})
+
+console.log(text)
+```
+
+---
+
+## Summary
+
+| Plugin | npm package | What is traced |
+|---|---|---|
+| `openai` | `openai` | Chat, completions, embeddings, images, fine-tuning |
+| `anthropic` | `@anthropic-ai/sdk` | Messages, streaming |
+| `langchain` | `@langchain/core` | Chains, LLMs, chat models, embeddings, tools, vector stores |
+| `langgraph` | `@langchain/langgraph` | Graph node executions |
+| `google-cloud-vertexai` | `@google-cloud/vertexai` | Gemini model calls |
+| `google-genai` | `@google/genai` | Gemini API calls |
+| `aws-sdk` | `@aws-sdk/client-bedrock-runtime` | Bedrock `InvokeModel` calls |
+| `ai` | `ai` | Vercel AI SDK model calls |

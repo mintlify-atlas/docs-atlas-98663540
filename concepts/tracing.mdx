@@ -1,0 +1,178 @@
+---
+title: "Distributed Tracing"
+description: "Understand how dd-trace represents and collects end-to-end request traces across your Node.js services."
+---
+
+## What is a trace?
+
+A **trace** is a tree of spans that represents a single end-to-end request as it flows through your system. Every trace has a globally unique trace ID, and every span within it shares that ID so Datadog can reconstruct the full picture.
+
+The hierarchy looks like this:
+
+```
+Tracer
+└── Trace (trace_id: 4bf92f3577b34da6)
+    ├── Root span  – e.g. web.request
+    │   ├── Child span – e.g. pg.query
+    │   └── Child span – e.g. redis.get
+    └── ...
+```
+
+The root span is the first span in the trace. All other spans are children or descendants of it.
+
+## Automatic instrumentation
+
+When you call `tracer.init()`, dd-trace patches supported libraries automatically. You do not need to add tracing code to your HTTP handlers, database calls, or queue consumers — the library does it for you via its plugin system.
+
+```javascript
+// Must be the first require in your application entry point
+const tracer = require('dd-trace').init({
+  service: 'my-node-app',
+  env: 'production',
+})
+```
+
+<Note>
+  `require('dd-trace').init()` must come before any other `require` statements. Plugins instrument libraries at import time, so importing a library before calling `init()` will result in that library not being traced.
+</Note>
+
+You can configure individual plugins using `tracer.use()`:
+
+```javascript
+const tracer = require('dd-trace').init()
+
+// Enable and configure the pg plugin
+tracer.use('pg', {
+  service: 'pg-cluster'
+})
+```
+
+## The Tracer → Trace → Span relationship
+
+The `Tracer` is the entry point. It creates spans, manages the active scope, and sends completed traces to the Datadog Agent.
+
+From the TypeScript type definitions in `index.d.ts`:
+
+```typescript
+interface Tracer extends opentracing.Tracer {
+  // Start a new span
+  startSpan(name: string, options?: tracer.SpanOptions): tracer.Span;
+
+  // Trace a function, automatically creating and finishing a span
+  trace<T>(name: string, fn: (span: tracer.Span) => T): T;
+  trace<T>(name: string, fn: (span: tracer.Span, done: (error?: Error) => void) => T): T;
+  trace<T>(
+    name: string,
+    options: tracer.TraceOptions & tracer.SpanOptions,
+    fn: (span?: tracer.Span, done?: (error?: Error) => void) => T
+  ): T;
+
+  // Return the scope manager for the current async context
+  scope(): tracer.Scope;
+}
+```
+
+## Active span context and async propagation
+
+dd-trace uses Node.js `AsyncLocalStorage` under the hood to carry the active span across asynchronous boundaries. This means the active span is available anywhere in an async call chain without you passing it manually.
+
+The `tracer.scope()` API gives you explicit control when needed:
+
+```typescript
+interface Scope {
+  // Get the active span in the current async context
+  active(): Span | null;
+
+  // Run a function with a specific span activated
+  activate<T>(span: Span, fn: ((...args: any[]) => T)): T;
+
+  // Bind a function or promise to a specific span
+  bind<T extends (...args: any[]) => void>(fn: T, span?: Span | null): T;
+  bind<T>(fn: Promise<T>, span?: Span | null): Promise<T>;
+}
+```
+
+In practice, `tracer.trace()` calls `scope.activate()` for you:
+
+```javascript
+// tracer.trace() activates the span automatically
+tracer.trace('web.request', (span) => {
+  // scope.active() === span here and in any async code called from here
+  doSomethingAsync().then(() => {
+    // scope.active() is still the same span
+  })
+})
+```
+
+Use `scope.activate()` directly only in edge cases — for example, when executing callbacks from an external queue where the async context has been lost.
+
+## How traces are sent to the Datadog Agent
+
+Completed spans are buffered in-process and flushed to the Datadog Agent over HTTP on a configurable interval (default: 2000 ms). The agent then forwards them to the Datadog backend.
+
+```
+Your app  →  dd-trace (buffer)  →  Datadog Agent (localhost:8126)  →  Datadog backend
+```
+
+You can configure the agent URL:
+
+```javascript
+const tracer = require('dd-trace').init({
+  // Default: http://localhost:8126
+  url: 'http://datadog-agent:8126',
+})
+```
+
+Or via environment variables:
+
+```bash
+DD_AGENT_HOST=datadog-agent DD_TRACE_AGENT_PORT=8126 node app.js
+```
+
+## Trace IDs and span IDs
+
+Every trace and span has a unique identifier. You can access them from any active `SpanContext`:
+
+```typescript
+interface SpanContext extends opentracing.SpanContext {
+  // Returns the string representation of the trace ID
+  toTraceId(): string;
+
+  // Returns the string representation of the span ID
+  toSpanId(): string;
+
+  // Returns the traceparent string used for DBM correlation
+  toTraceparent(): string;
+}
+```
+
+To read the current IDs at runtime:
+
+```javascript
+const tracer = require('dd-trace').init()
+
+tracer.trace('web.request', (span) => {
+  const context = span.context()
+  console.log('trace id:', context.toTraceId())
+  console.log('span id:',  context.toSpanId())
+})
+```
+
+Trace IDs are 128-bit when `traceId128BitGenerationEnabled` is set (the high 64 bits are stored in the `_dd.p.tid` tag). Span IDs are always 64-bit.
+
+## TracerOptions reference
+
+The most commonly used options when calling `tracer.init()`:
+
+| Option | Environment variable | Default | Description |
+|--------|---------------------|---------|-------------|
+| `service` | `DD_SERVICE` | `package.json` name | Service name |
+| `env` | `DD_ENV` | — | Environment tag (e.g. `production`) |
+| `version` | `DD_VERSION` | `package.json` version | Version tag |
+| `url` | `DD_TRACE_AGENT_URL` | `http://localhost:8126` | Agent URL |
+| `hostname` | `DD_AGENT_HOST` | `127.0.0.1` | Agent hostname |
+| `port` | `DD_TRACE_AGENT_PORT` | `8126` | Agent port |
+| `sampleRate` | `DD_TRACE_SAMPLE_RATE` | — | Global sample rate (0–1) |
+| `logInjection` | `DD_LOGS_INJECTION` | `false` | Inject trace IDs into logs |
+| `plugins` | — | `true` | Load all built-in plugins |
+| `flushInterval` | `DD_TRACE_FLUSH_INTERVAL` | `2000` | Flush interval in ms |

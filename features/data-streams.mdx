@@ -1,0 +1,137 @@
+---
+title: "Data Streams Monitoring"
+description: "Measure end-to-end message latency and throughput across Kafka, SQS, SNS, RabbitMQ, and other message queues with Datadog Data Streams Monitoring."
+keywords: ["data streams", "DSM", "Kafka", "SQS", "RabbitMQ", "message queue", "latency", "dd-trace"]
+---
+
+Data Streams Monitoring (DSM) measures the end-to-end latency of messages as they travel through your pipeline — from producer to consumer — across any number of intermediate queues or topics. It gives you a topology view of your streaming infrastructure, per-pathway latency percentiles, and throughput metrics without any changes to your business logic.
+
+## What DSM tracks
+
+- **End-to-end latency**: the time between a message being produced and being consumed, per pathway.
+- **Queue/topic throughput**: the number of messages produced and consumed per second, per queue.
+- **Pipeline topology**: automatic discovery of producer → queue → consumer relationships.
+- **Consumer lag**: how far behind each consumer group is from the latest offset.
+
+## Supported integrations
+
+The following integrations report DSM data automatically when DSM is enabled:
+
+- `kafkajs`
+- `@confluentinc/kafka-javascript`
+- `aws-sdk` (SQS, SNS, Kinesis)
+- `amqplib` (RabbitMQ)
+- `@azure/service-bus`
+- `@azure/event-hubs`
+- `@google-cloud/pubsub`
+- `bullmq`
+
+## Enable DSM
+
+<Steps>
+  <Step title="Set the environment variable or init option">
+    ```bash
+    DD_DATA_STREAMS_ENABLED=true node server.js
+    ```
+
+    Or in code:
+
+    ```javascript
+    const tracer = require('dd-trace').init({
+      dsmEnabled: true,
+    })
+    ```
+  </Step>
+
+  <Step title="Verify the Agent supports DSM">
+    DSM requires Datadog Agent 7.34 or later. Confirm your Agent version:
+
+    ```bash
+    datadog-agent version
+    ```
+  </Step>
+
+  <Step title="View your pipeline in Datadog">
+    After producing and consuming a few messages, open [Datadog APM → Data Streams](https://app.datadoghq.com/data-streams) to see your pipeline topology and latency metrics.
+  </Step>
+</Steps>
+
+## Manual checkpointing
+
+If your messaging library is not in the list of supported integrations, or if you use a custom transport, you can instrument it manually using `tracer.dataStreamsCheckpointer`.
+
+### Record a produce checkpoint
+
+Call `setProduceCheckpoint()` before sending a message. Pass a `carrier` object — typically the message headers or properties — where DSM context will be injected:
+
+```javascript
+const tracer = require('dd-trace')
+
+async function publishMessage(topic, payload) {
+  const headers = {}
+
+  tracer.dataStreamsCheckpointer.setProduceCheckpoint(
+    'kafka',   // type: the streaming technology (e.g. 'kafka', 'kinesis', 'sns')
+    topic,     // target: topic, queue, or exchange name
+    headers    // carrier: object that will receive DSM context headers
+  )
+
+  await producer.send({
+    topic,
+    messages: [{ value: JSON.stringify(payload), headers }],
+  })
+}
+```
+
+### Record a consume checkpoint
+
+Call `setConsumeCheckpoint()` when processing a message. Pass the same `carrier` object (the message headers) so DSM can extract the upstream context and compute end-to-end latency:
+
+```javascript
+const tracer = require('dd-trace')
+
+async function processMessage(message) {
+  tracer.dataStreamsCheckpointer.setConsumeCheckpoint(
+    'kafka',            // type
+    message.topic,      // source: topic, queue, or exchange name
+    message.headers     // carrier: the message headers containing DSM context
+  )
+
+  await handleMessage(message)
+}
+```
+
+The `manualCheckpoint` parameter defaults to `true`. Manual checkpoints take precedence over automatic instrumentation in the same call path, preventing double-counting.
+
+### Track a transaction
+
+Use `trackTransaction()` to record a transaction ID at a named checkpoint without pathway propagation. This tags the active span with the transaction ID for correlation:
+
+```javascript
+tracer.dataStreamsCheckpointer.trackTransaction(
+  order.id,              // transactionId
+  'order-placed',        // checkpointName
+  span                   // optional: defaults to the active span
+)
+```
+
+<Note>
+  `setProduceCheckpoint()`, `setConsumeCheckpoint()`, and `trackTransaction()` all no-op when DSM is not enabled, so you can safely add them to code that runs with DSM off.
+</Note>
+
+## TypeScript types
+
+The `DataStreamsCheckpointer` interface is exposed on the tracer:
+
+```typescript
+import tracer from 'dd-trace'
+
+// setProduceCheckpoint(type: string, target: string, carrier: object): void
+tracer.dataStreamsCheckpointer.setProduceCheckpoint('kafka', 'orders', headers)
+
+// setConsumeCheckpoint(type: string, source: string, carrier: object, manualCheckpoint?: boolean): PathwayContext
+tracer.dataStreamsCheckpointer.setConsumeCheckpoint('kafka', 'orders', headers)
+
+// trackTransaction(transactionId: string, checkpointName: string, span?: Span | null): void
+tracer.dataStreamsCheckpointer.trackTransaction('order-123', 'processed')
+```

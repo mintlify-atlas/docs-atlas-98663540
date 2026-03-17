@@ -1,0 +1,284 @@
+---
+title: "Span"
+description: "A Span represents a single unit of work within a trace. It records the operation name, timing, tags, and links to related spans."
+---
+
+A `Span` is the fundamental building block of a trace. Each span represents a distinct operation — an HTTP request, a database query, a function call — with a start time, duration, and metadata attached as tags.
+
+Spans form a tree: each span can have a parent, and together they form a [trace](/concepts/tracing). The top-level span with no parent is the root span.
+
+## Getting a span
+
+You get a span either by creating one manually or from within a `tracer.trace()` callback:
+
+```javascript
+const tracer = require('dd-trace').init()
+
+// From tracer.trace() — span is created, activated, and finished automatically
+tracer.trace('web.request', (span) => {
+  span.setTag('http.method', 'GET')
+})
+
+// From tracer.startSpan() — you control lifecycle
+const span = tracer.startSpan('batch.job')
+span.finish()
+
+// From the active scope
+const activeSpan = tracer.scope().active()
+```
+
+---
+
+## context
+
+Returns the [SpanContext](/api/span-context) associated with this span. The context holds the trace ID, span ID, and baggage.
+
+```typescript
+context(): SpanContext
+```
+
+<ResponseField name="returns" type="SpanContext">
+  The span's context, containing trace ID, span ID, and baggage items.
+</ResponseField>
+
+```javascript
+const ctx = span.context()
+console.log(ctx.toTraceId()) // '5e2a...' (128-bit or 64-bit hex)
+console.log(ctx.toSpanId())  // 'a1b2c3d4...'
+```
+
+---
+
+## tracer
+
+Returns the tracer that created this span.
+
+```typescript
+tracer(): opentracing.Tracer
+```
+
+<ResponseField name="returns" type="opentracing.Tracer">
+  The tracer instance that created the span.
+</ResponseField>
+
+---
+
+## setOperationName
+
+Sets the operation name of the span. Use this to rename a span after creation.
+
+```typescript
+setOperationName(name: string): this
+```
+
+<ParamField path="name" type="string" required>
+  The new operation name for the span.
+</ParamField>
+
+<ResponseField name="returns" type="Span">
+  The span instance for chaining.
+</ResponseField>
+
+```javascript
+span.setOperationName('db.query')
+```
+
+---
+
+## setTag
+
+Sets a single tag on the span.
+
+```typescript
+setTag(key: string, value: any): this
+```
+
+<ParamField path="key" type="string" required>
+  The tag name.
+</ParamField>
+
+<ParamField path="value" type="any" required>
+  The tag value. Strings, numbers, and booleans are recommended.
+</ParamField>
+
+<ResponseField name="returns" type="Span">
+  The span instance for chaining.
+</ResponseField>
+
+```javascript
+span.setTag('http.status_code', 200)
+span.setTag('user.id', 'u-123')
+
+// Tag the span as an error
+span.setTag('error', new Error('something went wrong'))
+```
+
+---
+
+## addTags
+
+Sets multiple tags on the span at once.
+
+```typescript
+addTags(keyValueMap: { [key: string]: any }): this
+```
+
+<ParamField path="keyValueMap" type="object" required>
+  An object whose keys are tag names and values are tag values.
+</ParamField>
+
+<ResponseField name="returns" type="Span">
+  The span instance for chaining.
+</ResponseField>
+
+```javascript
+span.addTags({
+  'http.method': 'POST',
+  'http.url': '/api/orders',
+  'http.status_code': 201,
+})
+```
+
+---
+
+## finish
+
+Finishes the span by recording its end time and submitting it for export. After calling `finish()`, do not set additional tags or call any other methods on the span.
+
+```typescript
+finish(finishTime?: number): void
+```
+
+<ParamField path="finishTime" type="number">
+  Optional explicit finish time in milliseconds. Defaults to the current time.
+</ParamField>
+
+```javascript
+span.finish()
+
+// With explicit finish time
+span.finish(Date.now() - 50)
+```
+
+<Warning>
+Every span created with `tracer.startSpan()` must be finished. Unfinished spans are dropped and never sent to the agent.
+</Warning>
+
+---
+
+## addLink
+
+Adds a span link that causally associates another span with this one, without making it a parent.
+
+```typescript
+// Preferred overload
+addLink(link: { context: SpanContext, attributes?: Object }): void
+
+// Deprecated overload (removed in v6)
+addLink(context: SpanContext, attributes?: Object): void
+```
+
+<Note>
+Prefer adding links at span creation time via the `links` option on `startSpan()` or `trace()`. Links added after creation do not influence the sampling decision.
+</Note>
+
+<ParamField path="link" type="{ context: SpanContext, attributes?: Object }" required>
+  An object containing the `SpanContext` to link and optional string attributes.
+</ParamField>
+
+```javascript
+const producerCtx = producerSpan.context()
+
+const consumerSpan = tracer.startSpan('queue.process')
+consumerSpan.addLink({
+  context: producerCtx,
+  attributes: { 'link.name': 'enqueued-by' },
+})
+consumerSpan.finish()
+```
+
+---
+
+## addLinks
+
+Adds multiple span links at once.
+
+```typescript
+addLinks(links: { context: SpanContext, attributes?: Object }[]): void
+```
+
+<ParamField path="links" type="{ context: SpanContext, attributes?: Object }[]" required>
+  An array of link objects, each containing a `SpanContext` and optional attributes.
+</ParamField>
+
+```javascript
+span.addLinks([
+  { context: span1.context() },
+  { context: span2.context(), attributes: { 'link.type': 'retry-of' } },
+])
+```
+
+---
+
+## log / logEvent
+
+<Warning>
+These methods are deprecated and are no-ops in the current implementation. They exist for OpenTracing API compatibility only.
+</Warning>
+
+```typescript
+log(fields: { [key: string]: any }): this
+logEvent(eventName: string, payload?: { [key: string]: any }): void
+```
+
+Use `setTag()` or `addTags()` to attach metadata to a span.
+
+---
+
+## Special tags
+
+Datadog recognizes a set of reserved tag keys that control how spans are displayed and sampled. Import the constants from `dd-trace/ext/tags` rather than using raw strings.
+
+```javascript
+const { RESOURCE_NAME, SERVICE_NAME, SPAN_TYPE } = require('dd-trace/ext/tags')
+const { ERROR_TYPE, ERROR_MESSAGE, ERROR_STACK } = require('dd-trace/ext/tags')
+```
+
+| Constant | Tag key | Description |
+|---|---|---|
+| `RESOURCE_NAME` | `resource.name` | The resource being accessed (e.g. route, SQL query). Falls back to operation name if not set. |
+| `SERVICE_NAME` | `service.name` | Override the service name for this span. |
+| `SPAN_TYPE` | `span.type` | The span type (e.g. `'web'`, `'db'`, `'cache'`). Falls back to `'custom'` if not set. |
+| `ERROR_TYPE` | `error.type` | The error class name (e.g. `'TypeError'`). |
+| `ERROR_MESSAGE` | `error.msg` | The error message string. |
+| `ERROR_STACK` | `error.stack` | The full error stack trace. |
+
+### Error tagging pattern
+
+When using `tracer.trace()` or `tracer.wrap()`, errors are tagged automatically. When using `startSpan()` directly, tag errors yourself:
+
+```javascript
+const { ERROR_TYPE, ERROR_MESSAGE, ERROR_STACK } = require('dd-trace/ext/tags')
+
+const span = tracer.startSpan('risky.operation')
+
+try {
+  riskyOperation()
+  span.finish()
+} catch (err) {
+  span.addTags({
+    [ERROR_TYPE]: err.name,
+    [ERROR_MESSAGE]: err.message,
+    [ERROR_STACK]: err.stack,
+  })
+  span.finish()
+  throw err
+}
+```
+
+Alternatively, pass the `Error` object directly to `setTag('error', err)` — dd-trace will extract the fields automatically:
+
+```javascript
+span.setTag('error', err)
+span.finish()
+```

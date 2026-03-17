@@ -1,0 +1,660 @@
+---
+title: "TracerOptions reference"
+description: "Complete reference for all options accepted by tracer.init()."
+---
+
+Pass options to `tracer.init()` to configure dd-trace. Programmatic configuration always takes precedence over environment variables unless noted otherwise.
+
+```javascript
+const tracer = require('dd-trace').init({
+  service: 'my-service',
+  env: 'production',
+  version: '1.2.3',
+})
+```
+
+---
+
+## General
+
+<ParamField path="service" type="string">
+  The service name. If not set, dd-trace attempts to infer it from `package.json`.
+
+  **Env:** `DD_SERVICE`, `OTEL_SERVICE_NAME`
+</ParamField>
+
+<ParamField path="env" type="string">
+  The application environment (e.g. `'prod'`, `'staging'`).
+
+  **Env:** `DD_ENV`
+</ParamField>
+
+<ParamField path="version" type="string">
+  The application version. If not set, dd-trace attempts to infer it from `package.json`.
+
+  **Env:** `DD_VERSION`
+</ParamField>
+
+<ParamField path="tags" type="{ [key: string]: any }">
+  Global tags assigned to every span.
+
+  **Env:** `DD_TAGS`, `OTEL_RESOURCE_ATTRIBUTES`
+</ParamField>
+
+<ParamField path="serviceMapping" type="{ [key: string]: string }">
+  Per-plugin service name overrides. Keys are plugin names, values are the desired service name.
+
+  **Env:** `DD_SERVICE_MAPPING`
+</ParamField>
+
+<ParamField path="plugins" type="boolean" default="true">
+  Whether to load all built-in plugins.
+</ParamField>
+
+<ParamField path="apmTracingEnabled" type="boolean" default="true">
+  Disable APM tracing when using standalone products such as ASM.
+
+  **Env:** `DD_APM_TRACING_ENABLED`
+</ParamField>
+
+<ParamField path="logger" type="object">
+  Custom logger. Must implement `error()`, `warn()`, `info()`, and `debug()` methods.
+
+  ```javascript
+  logger: {
+    error: (err) => myLogger.error(err),
+    warn: (msg) => myLogger.warn(msg),
+    info: (msg) => myLogger.info(msg),
+    debug: (msg) => myLogger.debug(msg),
+  }
+  ```
+</ParamField>
+
+<ParamField path="logLevel" type="'debug' | 'info' | 'warn' | 'error'" default="'debug'">
+  Minimum log level when debug logging is enabled.
+
+  **Env:** `DD_TRACE_LOG_LEVEL`, `OTEL_LOG_LEVEL`
+</ParamField>
+
+<ParamField path="logInjection" type="boolean" default="false">
+  Inject trace IDs into log records to correlate traces with logs.
+
+  **Env:** `DD_LOGS_INJECTION`
+</ParamField>
+
+<ParamField path="startupLogs" type="boolean" default="false">
+  Emit startup diagnostic logs.
+
+  **Env:** `DD_TRACE_STARTUP_LOGS`
+</ParamField>
+
+<ParamField path="reportHostname" type="boolean" default="false">
+  Include the service host's hostname in reported metrics.
+
+  **Env:** `DD_TRACE_REPORT_HOSTNAME`
+</ParamField>
+
+---
+
+## Network
+
+<ParamField path="url" type="string">
+  Full URL of the trace agent. Takes priority over `hostname` and `port`.
+
+  **Env:** `DD_TRACE_AGENT_URL`
+</ParamField>
+
+<ParamField path="hostname" type="string" default="'127.0.0.1'">
+  Hostname of the trace agent.
+
+  **Env:** `DD_AGENT_HOST`
+</ParamField>
+
+<ParamField path="port" type="number | string" default="8126">
+  Port of the trace agent.
+
+  **Env:** `DD_TRACE_AGENT_PORT`
+</ParamField>
+
+<ParamField path="protocolVersion" type="string" default="'0.4'">
+  Agent protocol version. Must be supported by the installed Agent version.
+
+  **Env:** `DD_TRACE_AGENT_PROTOCOL_VERSION`
+</ParamField>
+
+<ParamField path="lookup" type="LookupFunction">
+  Custom DNS lookup function for Agent requests. Defaults to `dns.lookup()`.
+</ParamField>
+
+<ParamField path="dogstatsd" type="object">
+  DogStatsD agent connection options.
+
+  <Expandable title="dogstatsd">
+    <ParamField path="hostname" type="string">
+      DogStatsD agent hostname.
+
+      **Env:** `DD_DOGSTATSD_HOST`
+    </ParamField>
+    <ParamField path="port" type="number" default="8125">
+      DogStatsD agent port.
+
+      **Env:** `DD_DOGSTATSD_PORT`
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="clientIpEnabled" type="boolean" default="false">
+  Collect the client IP from relevant HTTP headers.
+
+  **Env:** `DD_TRACE_CLIENT_IP_ENABLED`
+</ParamField>
+
+<ParamField path="clientIpHeader" type="string">
+  Custom header name to source the `http.client_ip` tag from.
+
+  **Env:** `DD_TRACE_CLIENT_IP_HEADER`
+</ParamField>
+
+---
+
+## Tracing and sampling
+
+<ParamField path="sampleRate" type="number">
+  Ingestion sample rate between `0` and `1`.
+
+  **Env:** `DD_TRACE_SAMPLE_RATE`, `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`
+</ParamField>
+
+<ParamField path="rateLimit" type="number">
+  Global rate limit applied to all sampling rules. Controls the ingestion rate between the Agent and backend.
+
+  **Env:** `DD_TRACE_RATE_LIMIT`
+</ParamField>
+
+<ParamField path="samplingRules" type="SamplingRule[]" default="[]">
+  Sampling rules for priority sampling. Each rule is matched against a trace's `service` and `name`.
+
+  <Expandable title="SamplingRule">
+    <ParamField path="sampleRate" type="number" required>
+      Sampling rate for this rule (0–1).
+    </ParamField>
+    <ParamField path="service" type="string | RegExp">
+      Service name or pattern to match.
+    </ParamField>
+    <ParamField path="name" type="string | RegExp">
+      Operation name or pattern to match.
+    </ParamField>
+  </Expandable>
+
+  **Env:** `DD_TRACE_SAMPLING_RULES`
+</ParamField>
+
+<ParamField path="spanSamplingRules" type="SpanSamplingRule[]" default="[]">
+  Span sampling rules to ingest single spans when the enclosing trace is dropped.
+
+  <Expandable title="SpanSamplingRule">
+    <ParamField path="sampleRate" type="number">
+      Sampling rate (0–1). Defaults to `1.0`.
+    </ParamField>
+    <ParamField path="maxPerSecond" type="number">
+      Maximum number of matching spans allowed per second.
+    </ParamField>
+    <ParamField path="service" type="string">
+      Service name or pattern.
+    </ParamField>
+    <ParamField path="name" type="string">
+      Operation name or pattern.
+    </ParamField>
+  </Expandable>
+
+  **Env:** `DD_SPAN_SAMPLING_RULES`, `DD_SPAN_SAMPLING_RULES_FILE`
+</ParamField>
+
+<ParamField path="flushInterval" type="number" default="2000">
+  Interval in milliseconds at which the tracer submits traces to the Agent.
+
+  **Env:** `DD_TRACE_FLUSH_INTERVAL`
+</ParamField>
+
+<ParamField path="flushMinSpans" type="number" default="1000">
+  Number of spans before partially exporting a trace. Prevents very large traces from consuming too much memory.
+
+  **Env:** `DD_TRACE_PARTIAL_FLUSH_MIN_SPANS`
+</ParamField>
+
+<ParamField path="tracePropagationStyle" type="string[] | PropagationStyle">
+  Selection and priority order of context propagation injection and extraction mechanisms.
+
+  <Expandable title="PropagationStyle">
+    <ParamField path="inject" type="string[]">
+      Propagation mechanisms to use for injection.
+    </ParamField>
+    <ParamField path="extract" type="string[]">
+      Propagation mechanisms to use for extraction, in priority order.
+    </ParamField>
+  </Expandable>
+
+  **Env:** `DD_TRACE_PROPAGATION_STYLE`, `DD_TRACE_PROPAGATION_STYLE_INJECT`, `DD_TRACE_PROPAGATION_STYLE_EXTRACT`, `OTEL_PROPAGATORS`
+</ParamField>
+
+<ParamField path="runtimeMetrics" type="boolean | object" default="false">
+  Enable runtime metrics. Pass `true` to enable all metrics, or an object for fine-grained control.
+
+  <Expandable title="runtimeMetrics object">
+    <ParamField path="enabled" type="boolean">
+      **Env:** `DD_RUNTIME_METRICS_ENABLED`
+    </ParamField>
+    <ParamField path="gc" type="boolean">
+      Enable garbage collection metrics.
+
+      **Env:** `DD_RUNTIME_METRICS_GC_ENABLED`
+    </ParamField>
+    <ParamField path="eventLoop" type="boolean">
+      Enable event loop metrics.
+
+      **Env:** `DD_RUNTIME_METRICS_EVENT_LOOP_ENABLED`
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="runtimeMetricsRuntimeId" type="boolean" default="false">
+  Add an auto-generated `runtime-id` tag to metrics.
+
+  **Env:** `DD_RUNTIME_METRICS_RUNTIME_ID_ENABLED`
+</ParamField>
+
+<ParamField path="remoteConfig" type="object">
+  Remote Configuration polling options.
+
+  <Expandable title="remoteConfig">
+    <ParamField path="pollInterval" type="number" default="5">
+      Remote Configuration polling interval in seconds.
+
+      **Env:** `DD_REMOTE_CONFIG_POLL_INTERVAL_SECONDS`
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="cloudPayloadTagging" type="object">
+  Cloud payload tagging for AWS Lambda and similar environments.
+
+  <Expandable title="cloudPayloadTagging">
+    <ParamField path="request" type="string">
+      JSONPath queries to redact in request payloads.
+
+      **Env:** `DD_TRACE_CLOUD_REQUEST_PAYLOAD_TAGGING`
+    </ParamField>
+    <ParamField path="response" type="string">
+      JSONPath queries to redact in response payloads.
+
+      **Env:** `DD_TRACE_CLOUD_RESPONSE_PAYLOAD_TAGGING`
+    </ParamField>
+    <ParamField path="maxDepth" type="number">
+      Maximum depth of payload traversal.
+
+      **Env:** `DD_TRACE_CLOUD_PAYLOAD_TAGGING_MAX_DEPTH`
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="profiling" type="boolean">
+  Enable continuous profiling.
+
+  **Env:** `DD_PROFILING_ENABLED`
+</ParamField>
+
+---
+
+## AppSec
+
+<ParamField path="appsec" type="boolean | object">
+  Enable Application Security Management. Pass `true` as a shorthand for `{ enabled: true }`.
+
+  <Expandable title="appsec options">
+    <ParamField path="enabled" type="boolean" default="false">
+      **Env:** `DD_APPSEC_ENABLED`
+    </ParamField>
+    <ParamField path="rules" type="string">
+      Path to a custom WAF rules file.
+
+      **Env:** `DD_APPSEC_RULES`
+    </ParamField>
+    <ParamField path="rateLimit" type="number" default="100">
+      Maximum number of AppSec attack traces per second.
+
+      **Env:** `DD_APPSEC_TRACE_RATE_LIMIT`
+    </ParamField>
+    <ParamField path="wafTimeout" type="number" default="5000">
+      Maximum time in microseconds the WAF may run synchronously.
+
+      **Env:** `DD_APPSEC_WAF_TIMEOUT`
+    </ParamField>
+    <ParamField path="obfuscatorKeyRegex" type="string">
+      Regex to redact sensitive data by key in attack reports.
+
+      **Env:** `DD_APPSEC_OBFUSCATION_PARAMETER_KEY_REGEXP`
+    </ParamField>
+    <ParamField path="obfuscatorValueRegex" type="string">
+      Regex to redact sensitive data by value in attack reports.
+
+      **Env:** `DD_APPSEC_OBFUSCATION_PARAMETER_VALUE_REGEXP`
+    </ParamField>
+    <ParamField path="blockedTemplateHtml" type="string">
+      Path to a custom HTML blocking response template.
+
+      **Env:** `DD_APPSEC_HTTP_BLOCKED_TEMPLATE_HTML`
+    </ParamField>
+    <ParamField path="blockedTemplateJson" type="string">
+      Path to a custom JSON blocking response template.
+
+      **Env:** `DD_APPSEC_HTTP_BLOCKED_TEMPLATE_JSON`
+    </ParamField>
+    <ParamField path="blockedTemplateGraphql" type="string">
+      Path to a custom GraphQL JSON blocking response template.
+
+      **Env:** `DD_APPSEC_GRAPHQL_BLOCKED_TEMPLATE_JSON`
+    </ParamField>
+    <ParamField path="eventTracking.mode" type="'anonymous' | 'anon' | 'identification' | 'ident' | 'disabled'" default="'identification'">
+      Automated user tracking mode for user IDs and login collection.
+      - `anonymous` / `anon`: hash user IDs before collecting them.
+      - `identification` / `ident`: collect without redaction.
+      - `disabled`: do not collect user IDs or logins.
+
+      **Env:** `DD_APPSEC_AUTO_USER_INSTRUMENTATION_MODE`
+    </ParamField>
+    <ParamField path="apiSecurity.enabled" type="boolean" default="true">
+      Enable API Security.
+
+      **Env:** `DD_API_SECURITY_ENABLED`
+    </ParamField>
+    <ParamField path="apiSecurity.endpointCollectionEnabled" type="boolean" default="true">
+      Enable endpoint collection for API Security.
+
+      **Env:** `DD_API_SECURITY_ENDPOINT_COLLECTION_ENABLED`
+    </ParamField>
+    <ParamField path="apiSecurity.endpointCollectionMessageLimit" type="number" default="300">
+      Maximum endpoints serialized per message.
+
+      **Env:** `DD_API_SECURITY_ENDPOINT_COLLECTION_MESSAGE_LIMIT`
+    </ParamField>
+    <ParamField path="rasp.enabled" type="boolean" default="false">
+      Enable Runtime Application Self-Protection (RASP).
+
+      **Env:** `DD_APPSEC_RASP_ENABLED`
+    </ParamField>
+    <ParamField path="stackTrace.enabled" type="boolean" default="true">
+      Enable stack trace reporting for security events.
+
+      **Env:** `DD_APPSEC_STACK_TRACE_ENABLED`
+    </ParamField>
+    <ParamField path="stackTrace.maxStackTraces" type="number" default="2">
+      Maximum number of stack traces to report.
+
+      **Env:** `DD_APPSEC_MAX_STACK_TRACES`
+    </ParamField>
+    <ParamField path="stackTrace.maxDepth" type="number" default="32">
+      Maximum depth of each reported stack trace.
+
+      **Env:** `DD_APPSEC_MAX_STACK_TRACE_DEPTH`
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+---
+
+## IAST
+
+<ParamField path="iast" type="boolean | IastOptions">
+  Enable Interactive Application Security Testing. Pass `true` as a shorthand for `{ enabled: true }`.
+
+  <Expandable title="IastOptions">
+    <ParamField path="enabled" type="boolean" default="false">
+      **Env:** `DD_IAST_ENABLED`
+    </ParamField>
+    <ParamField path="requestSampling" type="number" default="30">
+      Percentage of requests IAST will analyze.
+
+      **Env:** `DD_IAST_REQUEST_SAMPLING`
+    </ParamField>
+    <ParamField path="maxConcurrentRequests" type="number" default="2">
+      Maximum number of requests analyzing code vulnerabilities simultaneously.
+
+      **Env:** `DD_IAST_MAX_CONCURRENT_REQUESTS`
+    </ParamField>
+    <ParamField path="maxContextOperations" type="number" default="2">
+      Maximum number of code vulnerabilities detected in the same request.
+
+      **Env:** `DD_IAST_MAX_CONTEXT_OPERATIONS`
+    </ParamField>
+    <ParamField path="dbRowsToTaint" type="number" default="1">
+      Number of rows to taint in data from databases.
+
+      **Env:** `DD_IAST_DB_ROWS_TO_TAINT`
+    </ParamField>
+    <ParamField path="deduplicationEnabled" type="boolean">
+      Enable vulnerability deduplication.
+
+      **Env:** `DD_IAST_DEDUPLICATION_ENABLED`
+    </ParamField>
+    <ParamField path="redactionEnabled" type="boolean" default="true">
+      Enable vulnerability redaction.
+
+      **Env:** `DD_IAST_REDACTION_ENABLED`
+    </ParamField>
+    <ParamField path="redactionNamePattern" type="string">
+      Regex to redact sensitive source names in vulnerability reports.
+
+      **Env:** `DD_IAST_REDACTION_NAME_PATTERN`
+    </ParamField>
+    <ParamField path="redactionValuePattern" type="string">
+      Regex to redact sensitive source values in vulnerability reports.
+
+      **Env:** `DD_IAST_REDACTION_VALUE_PATTERN`
+    </ParamField>
+    <ParamField path="telemetryVerbosity" type="string" default="'INFORMATION'">
+      Verbosity of telemetry sent.
+
+      **Env:** `DD_IAST_TELEMETRY_VERBOSITY`
+    </ParamField>
+    <ParamField path="stackTrace.enabled" type="boolean" default="true">
+      Enable stack trace reporting for IAST vulnerabilities.
+
+      **Env:** `DD_IAST_STACK_TRACE_ENABLED`
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+---
+
+## LLM Observability
+
+<ParamField path="llmobs" type="LLMObsEnableOptions">
+  Configuration for LLM Observability. The `DD_LLMOBS_ENABLED` environment variable takes precedence over this option.
+
+  <Expandable title="LLMObsEnableOptions">
+    <ParamField path="mlApp" type="string">
+      The name of your ML application.
+
+      **Env:** `DD_LLMOBS_ML_APP`
+    </ParamField>
+    <ParamField path="agentlessEnabled" type="boolean">
+      Disable sending data that requires a Datadog Agent.
+
+      **Env:** `DD_LLMOBS_AGENTLESS_ENABLED`
+    </ParamField>
+  </Expandable>
+
+  **Env:** `DD_LLMOBS_ENABLED` (takes precedence)
+</ParamField>
+
+---
+
+## Data Streams
+
+<ParamField path="dsmEnabled" type="boolean" default="false">
+  Enable Data Streams Monitoring.
+
+  **Env:** `DD_DATA_STREAMS_ENABLED`
+</ParamField>
+
+---
+
+## Database Monitoring
+
+<ParamField path="dbmPropagationMode" type="'disabled' | 'service' | 'full'" default="'disabled'">
+  Enable DBM to APM link using tag injection.
+
+  **Env:** `DD_DBM_PROPAGATION_MODE`
+</ParamField>
+
+<ParamField path="dbm" type="object">
+  Database Monitoring configuration.
+
+  <Expandable title="dbm">
+    <ParamField path="injectSqlBaseHash" type="boolean" default="false">
+      Inject the SQL base hash (propagation hash) in DBM SQL comments. Requires `DD_EXPERIMENTAL_PROPAGATE_PROCESS_TAGS_ENABLED=true`.
+
+      **Env:** `DD_DBM_INJECT_SQL_BASEHASH`
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+---
+
+## Profiling
+
+<ParamField path="profiling" type="boolean">
+  Enable continuous profiling.
+
+  **Env:** `DD_PROFILING_ENABLED`
+</ParamField>
+
+---
+
+## Dynamic Instrumentation
+
+<ParamField path="dynamicInstrumentation" type="object">
+  Configuration for Dynamic Instrumentation (Live Debugging).
+
+  <Expandable title="dynamicInstrumentation">
+    <ParamField path="enabled" type="boolean" default="false">
+      Enable Dynamic Instrumentation.
+
+      **Env:** `DD_DYNAMIC_INSTRUMENTATION_ENABLED`
+    </ParamField>
+    <ParamField path="probeFile" type="string">
+      Path to a custom probes configuration file.
+
+      **Env:** `DD_DYNAMIC_INSTRUMENTATION_PROBE_FILE`
+    </ParamField>
+    <ParamField path="captureTimeoutMs" type="number" default="15">
+      Timeout in milliseconds for capturing variable values.
+
+      **Env:** `DD_DYNAMIC_INSTRUMENTATION_CAPTURE_TIMEOUT_MS`
+    </ParamField>
+    <ParamField path="uploadIntervalSeconds" type="number" default="1">
+      Interval in seconds between uploads of probe data.
+
+      **Env:** `DD_DYNAMIC_INSTRUMENTATION_UPLOAD_INTERVAL_SECONDS`
+    </ParamField>
+    <ParamField path="redactedIdentifiers" type="string[]" default="[]">
+      Additional identifier names to redact in captured data. Added to the built-in default list.
+
+      **Env:** `DD_DYNAMIC_INSTRUMENTATION_REDACTED_IDENTIFIERS`
+    </ParamField>
+    <ParamField path="redactionExcludedIdentifiers" type="string[]" default="[]">
+      Identifier names to exclude from redaction. Use this to allow some of the built-in redacted identifiers.
+
+      **Env:** `DD_DYNAMIC_INSTRUMENTATION_REDACTION_EXCLUDED_IDENTIFIERS`
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+---
+
+## Code Origin for Spans
+
+<ParamField path="codeOriginForSpans" type="object">
+  Configuration for Code Origin for Spans.
+
+  <Expandable title="codeOriginForSpans">
+    <ParamField path="enabled" type="boolean" default="true">
+      Enable Code Origin for Spans.
+
+      **Env:** `DD_CODE_ORIGIN_FOR_SPANS_ENABLED`
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+---
+
+## Experimental
+
+<ParamField path="experimental" type="object">
+  Experimental features. Options in this object may change or be removed in future releases.
+
+  <Expandable title="experimental options">
+    <ParamField path="b3" type="boolean" default="false">
+      Enable B3 context propagation.
+
+      **Env:** `DD_TRACE_EXPERIMENTAL_B3_ENABLED`
+    </ParamField>
+    <ParamField path="exporter" type="'log' | 'agent' | 'datadog'">
+      Write traces to log output or agentless, rather than send to an Agent.
+
+      **Env:** `DD_TRACE_EXPERIMENTAL_EXPORTER`
+    </ParamField>
+    <ParamField path="enableGetRumData" type="boolean" default="false">
+      Enable the `getRumData()` method.
+
+      **Env:** `DD_TRACE_EXPERIMENTAL_GET_RUM_DATA_ENABLED`
+    </ParamField>
+    <ParamField path="aiguard" type="object">
+      AI Guard configuration. See [AI Guard API](/api/aiguard) for details.
+
+      <Expandable title="aiguard">
+        <ParamField path="enabled" type="boolean">
+          Enable the AI Guard SDK.
+
+          **Env:** `DD_AI_GUARD_ENABLED`
+        </ParamField>
+        <ParamField path="endpoint" type="string">
+          AI Guard REST API URL.
+
+          **Env:** `DD_AI_GUARD_ENDPOINT`
+        </ParamField>
+        <ParamField path="timeout" type="number" default="5000">
+          Timeout in milliseconds for AI Guard API calls.
+
+          **Env:** `DD_AI_GUARD_TIMEOUT`
+        </ParamField>
+        <ParamField path="maxMessagesLength" type="number">
+          Maximum number of conversational messages in the meta-struct.
+
+          **Env:** `DD_AI_GUARD_MAX_MESSAGES_LENGTH`
+        </ParamField>
+        <ParamField path="maxContentSize" type="number">
+          Maximum size of the `content` field in the meta-struct.
+
+          **Env:** `DD_AI_GUARD_MAX_CONTENT_SIZE`
+        </ParamField>
+      </Expandable>
+    </ParamField>
+    <ParamField path="flaggingProvider" type="object">
+      OpenFeature Provider configuration.
+
+      <Expandable title="flaggingProvider">
+        <ParamField path="enabled" type="boolean" default="false">
+          Enable the feature flagging provider. Requires Remote Config.
+
+          **Env:** `DD_EXPERIMENTAL_FLAGGING_PROVIDER_ENABLED`
+        </ParamField>
+        <ParamField path="initializationTimeoutMs" type="number" default="30000">
+          Timeout in milliseconds for provider initialization.
+
+          **Env:** `DD_EXPERIMENTAL_FLAGGING_PROVIDER_INITIALIZATION_TIMEOUT_MS`
+        </ParamField>
+      </Expandable>
+    </ParamField>
+  </Expandable>
+</ParamField>

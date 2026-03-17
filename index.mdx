@@ -1,97 +1,102 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "dd-trace: Node.js APM Tracer"
+description: "Datadog's official APM tracing library for Node.js — automatic instrumentation for 100+ frameworks and libraries."
 ---
 
-## Setting up
-
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get distributed tracing running in your Node.js app in minutes.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Installation" icon="download" href="/installation">
+    Install and configure dd-trace for your environment.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="API Reference" icon="code" href="/api/tracer">
+    Explore the full Tracer API, spans, and product SDKs.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Integrations" icon="plug" href="/integrations/overview">
+    Browse 100+ automatic instrumentation plugins.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## What is dd-trace?
 
-Everything you need to create world-class documentation.
+`dd-trace` is the official Datadog APM (Application Performance Monitoring) client library for Node.js. It automatically instruments your application to capture distributed traces, which are then sent to the Datadog Agent and on to the Datadog platform for visualization, alerting, and analysis.
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+```bash
+npm install dd-trace
+```
 
-## Need inspiration?
+```javascript
+// Must be imported BEFORE any other modules
+const tracer = require('dd-trace').init()
+```
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+## Key capabilities
+
+<CardGroup cols={3}>
+  <Card title="Distributed Tracing" icon="diagram-project">
+    Automatically trace requests across microservices with context propagation via HTTP headers, message queues, and more.
+  </Card>
+  <Card title="100+ Integrations" icon="puzzle-piece">
+    Auto-instrument Express, Fastify, PostgreSQL, Redis, Kafka, OpenAI, and hundreds more — zero code changes required.
+  </Card>
+  <Card title="Application Security" icon="shield">
+    Detect and block web attacks in real time with AppSec WAF, IAST, and RASP without impacting performance.
+  </Card>
+  <Card title="LLM Observability" icon="brain">
+    Monitor AI applications built with OpenAI, Anthropic, LangChain, LangGraph, and Vertex AI.
+  </Card>
+  <Card title="Continuous Profiler" icon="chart-line">
+    Identify CPU and memory hotspots in production with always-on profiling.
+  </Card>
+  <Card title="Data Streams" icon="water">
+    Monitor end-to-end latency and throughput across Kafka, SQS, SNS, and other streaming pipelines.
+  </Card>
+  <Card title="Dynamic Instrumentation" icon="bug">
+    Capture variable values and stack traces in production without redeployment or restarts.
+  </Card>
+  <Card title="OpenTelemetry" icon="circle-nodes">
+    Use the OpenTelemetry API with Datadog's backend — no vendor lock-in on instrumentation code.
+  </Card>
+  <Card title="Log Correlation" icon="file-lines">
+    Automatically inject trace IDs into logs for seamless trace-to-log navigation in Datadog.
+  </Card>
+</CardGroup>
+
+## How it works
+
+```
+Your Node.js App  →  dd-trace  →  Datadog Agent  →  Datadog Platform
+```
+
+`dd-trace` hooks into Node.js module loading to automatically wrap supported libraries. When your application handles a request, dd-trace creates a **trace** — a tree of **spans** representing each operation (HTTP call, database query, etc.). These traces are batched and sent to the local Datadog Agent over HTTP, which forwards them to the Datadog backend.
+
+## Version support
+
+| Release Line | Node.js | Status |
+|:---:|:---:|:---:|
+| `v5` (current) | >= 18 | **Active** |
+| `v4` | >= 16 | EOL |
+| `v3` | >= 14 | EOL |
+| `v2` | >= 12 | EOL |
+
+<Note>
+  For new projects, use the latest `v5` release. Install with `npm install dd-trace` or `yarn add dd-trace`.
+</Note>
+
+## Quick links
+
+<CardGroup cols={2}>
+  <Card title="Core Concepts" icon="book" href="/concepts/tracing">
+    Understand traces, spans, sampling, and context propagation.
+  </Card>
+  <Card title="Configuration Reference" icon="sliders" href="/configuration/options">
+    Full reference for all TracerOptions and environment variables.
+  </Card>
+  <Card title="AppSec Guide" icon="shield-halved" href="/features/appsec">
+    Set up Application Security Monitoring to detect attacks.
+  </Card>
+  <Card title="LLM Observability" icon="robot" href="/features/llm-observability">
+    Monitor your AI applications with the LLMObs SDK.
+  </Card>
+</CardGroup>

@@ -1,0 +1,129 @@
+---
+title: "Dynamic Instrumentation"
+description: "Capture variable values, expressions, and stack traces in production without redeploying or modifying your code using Datadog Dynamic Instrumentation."
+keywords: ["dynamic instrumentation", "live debugging", "log probes", "metric probes", "span probes", "dd-trace"]
+---
+
+Dynamic Instrumentation (also called Live Debugging) lets you add instrumentation to a running production service without redeploying or restarting it. You define *probes* in the Datadog UI that target specific lines of code. When those lines execute, the tracer captures the values of local variables and expressions and sends them to Datadog.
+
+## What Dynamic Instrumentation does
+
+- **Log probes**: emit a log line with captured variable values every time a specific line of code is reached.
+- **Metric probes**: emit a custom metric (count, gauge, histogram, or rate) evaluated from an expression at a code location.
+- **Span probes**: create a span for the method or line that the probe targets, optionally adding tags from captured expressions.
+
+Probes are evaluated in-process without restarting your application. You can add, modify, and remove them live from the Datadog UI.
+
+## Requirements
+
+- Datadog Agent 7.44 or later.
+- `DD_DYNAMIC_INSTRUMENTATION_ENABLED=true` set on the service.
+- Source maps or original source files must be available so probes can target the right locations. Either commit source maps alongside your build artifacts, or set `DD_DYNAMIC_INSTRUMENTATION_PROBE_FILE` to a probes configuration file.
+
+## Enable Dynamic Instrumentation
+
+<Steps>
+  <Step title="Set the environment variable">
+    ```bash
+    DD_DYNAMIC_INSTRUMENTATION_ENABLED=true node server.js
+    ```
+
+    Or pass it to `tracer.init()`:
+
+    ```javascript
+    const tracer = require('dd-trace').init({
+      dynamicInstrumentation: {
+        enabled: true,
+      },
+    })
+    ```
+  </Step>
+
+  <Step title="Tag your service with source location information">
+    Dynamic Instrumentation uses the `service`, `env`, and `version` tags to identify your deployment when you add probes from the Datadog UI:
+
+    ```bash
+    DD_SERVICE=my-node-app \
+    DD_ENV=production \
+    DD_VERSION=1.2.3 \
+    DD_DYNAMIC_INSTRUMENTATION_ENABLED=true \
+    node server.js
+    ```
+  </Step>
+
+  <Step title="Add probes in the Datadog UI">
+    Go to [Datadog Dynamic Instrumentation](https://app.datadoghq.com/dynamic-instrumentation) and click **Add Probe**. Select your service, a source file, and a line number, then choose the probe type (log, metric, or span).
+  </Step>
+</Steps>
+
+## Configuration options
+
+<ParamField path="dynamicInstrumentation.enabled" type="boolean" default="false">
+  Whether to enable Dynamic Instrumentation. Environment variable: `DD_DYNAMIC_INSTRUMENTATION_ENABLED`.
+</ParamField>
+
+<ParamField path="dynamicInstrumentation.probeFile" type="string">
+  Path to a JSON file containing probe definitions. Useful for pre-configuring probes without the Datadog UI (for example in CI environments). Environment variable: `DD_DYNAMIC_INSTRUMENTATION_PROBE_FILE`.
+</ParamField>
+
+<ParamField path="dynamicInstrumentation.captureTimeoutMs" type="number" default="15">
+  Maximum time in milliseconds spent capturing variable values per probe evaluation. If capture exceeds this limit, partial data is reported. Environment variable: `DD_DYNAMIC_INSTRUMENTATION_CAPTURE_TIMEOUT_MS`.
+</ParamField>
+
+<ParamField path="dynamicInstrumentation.uploadIntervalSeconds" type="number" default="1">
+  Interval in seconds between uploads of captured probe data to the Datadog backend. Environment variable: `DD_DYNAMIC_INSTRUMENTATION_UPLOAD_INTERVAL_SECONDS`.
+</ParamField>
+
+<ParamField path="dynamicInstrumentation.redactedIdentifiers" type="string[]" default="[]">
+  Additional identifier names (variable names, parameter names, field names) whose values are always redacted before upload. These are added to the built-in default list. Environment variable: `DD_DYNAMIC_INSTRUMENTATION_REDACTED_IDENTIFIERS` (comma-separated).
+</ParamField>
+
+<ParamField path="dynamicInstrumentation.redactionExcludedIdentifiers" type="string[]" default="[]">
+  Identifier names to exclude from the built-in redaction list. Use this to allow-list specific identifiers that the default rules would otherwise redact. Environment variable: `DD_DYNAMIC_INSTRUMENTATION_REDACTION_EXCLUDED_IDENTIFIERS` (comma-separated).
+</ParamField>
+
+## Privacy and redaction
+
+Dynamic Instrumentation automatically redacts values for identifiers that typically contain sensitive data — passwords, tokens, secrets, credit card numbers, and similar. The built-in list covers common patterns such as `password`, `passwd`, `secret`, `token`, `api_key`, and many more.
+
+You can extend the redacted list with `redactedIdentifiers`:
+
+```javascript
+const tracer = require('dd-trace').init({
+  dynamicInstrumentation: {
+    enabled: true,
+    redactedIdentifiers: ['ssn', 'taxId', 'accountNumber'],
+  },
+})
+```
+
+If a built-in identifier needs to be captured (for example, `token` is meaningful for your debugging session), you can exclude it from the default list:
+
+```javascript
+const tracer = require('dd-trace').init({
+  dynamicInstrumentation: {
+    enabled: true,
+    redactionExcludedIdentifiers: ['token'],
+  },
+})
+```
+
+<Warning>
+  Removing identifiers from the redaction list exposes their values in Datadog logs and traces. Only exclude identifiers that you are confident do not contain sensitive data.
+</Warning>
+
+## How probes work
+
+When you add a probe in the Datadog UI, the configuration is delivered to your running service through the Datadog Agent's Remote Configuration channel. The tracer patches the target function using V8's inspector protocol (DevTools) — no source files are modified. Probe changes take effect within seconds of being saved in the UI.
+
+```
+Datadog UI  →  Remote Config  →  Agent  →  dd-trace (DevTools)  →  Your code
+```
+
+When the instrumented line executes:
+
+1. The tracer captures local variable values (subject to redaction and timeout).
+2. The capture is serialized and placed in an upload queue.
+3. An uploader thread sends batches to the Datadog backend at the configured interval.
+
+Capture and serialization happen synchronously, but the upload is asynchronous and off the main event loop.

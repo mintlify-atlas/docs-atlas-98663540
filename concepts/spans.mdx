@@ -1,0 +1,251 @@
+---
+title: "Spans"
+description: "Learn what spans are, how they are structured, and how to create and annotate them manually in dd-trace."
+---
+
+## What is a span?
+
+A **span** is a named, timed operation that represents a unit of work. Every span records:
+
+- A **name** (operation name) — e.g. `web.request`, `pg.query`
+- A **start time** and **duration** in nanoseconds
+- A **service** name
+- A **resource** name — the specific thing being acted on (e.g. the SQL query text, the route)
+- A **type** — e.g. `web`, `db`, `cache`
+- Arbitrary **tags** as key-value pairs
+- An optional **error** flag with `error.type`, `error.msg`, and `error.stack`
+
+From `span_format.js`, the wire format of a span contains:
+
+```javascript
+{
+  trace_id,   // shared by all spans in the trace
+  span_id,    // unique to this span
+  parent_id,  // the span_id of the parent (or 0 for root spans)
+  name,       // operation name
+  resource,   // resource name (defaults to operation name)
+  service,    // service name
+  type,       // span type
+  error,      // 0 = no error, 1 = error
+  meta,       // string tags
+  metrics,    // numeric tags
+  start,      // start time in nanoseconds since epoch
+  duration,   // duration in nanoseconds
+  links,      // span links
+}
+```
+
+## Span hierarchy
+
+Spans form a tree within a trace. The **root span** has no parent. Every other span has a `parent_id` pointing to its parent.
+
+```
+Root span (parent_id = 0)
+├── Child span A  (parent_id = root.span_id)
+│   └── Child span A.1
+└── Child span B
+```
+
+When you use `tracer.trace()`, dd-trace automatically makes the new span a child of the currently active span in the async context — unless you explicitly pass `childOf: null` to create a new root.
+
+## Span tags
+
+Tags are attached to spans as key-value pairs. Several tags have special meaning in Datadog:
+
+| Tag | Description |
+|-----|-------------|
+| `service.name` | Overrides the service name for this span |
+| `resource.name` | The specific resource (route, query, etc.) |
+| `span.type` | The span type (`web`, `db`, `cache`, `custom`, …) |
+| `error.type` | Error class name |
+| `error.msg` | Error message |
+| `error.stack` | Stack trace |
+
+You can attach any additional tags you need:
+
+```javascript
+tracer.trace('payment.process', (span) => {
+  span.setTag('payment.provider', 'stripe')
+  span.setTag('payment.amount', 42.00)
+  // ... your code
+})
+```
+
+For bulk tag assignment use `addTags()`:
+
+```javascript
+span.addTags({
+  'user.id': userId,
+  'tenant.id': tenantId,
+})
+```
+
+## Span lifecycle: start and finish
+
+dd-trace manages the span lifecycle automatically when you use `tracer.trace()`. The span is started when the callback is invoked and finished when:
+
+- The callback returns a non-promise value (synchronous)
+- The returned promise resolves or rejects
+- The `done` callback is called (callback-style)
+
+```typescript
+// Synchronous
+tracer.trace<T>(name: string, fn: (span: tracer.Span) => T): T;
+
+// Callback-style
+tracer.trace<T>(
+  name: string,
+  fn: (span: tracer.Span, done: (error?: Error) => void) => T
+): T;
+
+// Promise / async-await
+tracer.trace<T>(
+  name: string,
+  options: tracer.TraceOptions & tracer.SpanOptions,
+  fn: (span?: tracer.Span, done?: (error?: Error) => void) => T
+): T;
+```
+
+When an error is thrown or passed to `done`, dd-trace automatically sets the error tags on the span.
+
+## Manual span creation with `tracer.trace()`
+
+<CodeGroup>
+
+```javascript Synchronous
+const tracer = require('dd-trace').init()
+
+function processOrder(order) {
+  return tracer.trace('order.process', { resource: order.id }, (span) => {
+    span.setTag('order.type', order.type)
+    return applyDiscount(order)
+  })
+}
+```
+
+```javascript Promise / async-await
+const tracer = require('dd-trace').init()
+
+async function fetchUser(userId) {
+  return tracer.trace('user.fetch', { resource: userId }, async (span) => {
+    span.setTag('user.id', userId)
+    return await db.users.findById(userId)
+  })
+}
+```
+
+```javascript Callback-style
+const tracer = require('dd-trace').init()
+
+function sendEmail(payload, callback) {
+  tracer.trace('email.send', (span, done) => {
+    mailer.send(payload, (err) => {
+      done(err) // finishes span, sets error if err is truthy
+      callback(err)
+    })
+  })
+}
+```
+
+</CodeGroup>
+
+## Manual span creation with `tracer.startSpan()`
+
+For advanced use cases where you need more control over the span lifecycle, use `tracer.startSpan()` and call `span.finish()` yourself.
+
+```typescript
+startSpan(name: string, options?: tracer.SpanOptions): tracer.Span;
+```
+
+`SpanOptions` lets you set the parent explicitly:
+
+```typescript
+export type SpanOptions = Omit<opentracing.SpanOptions, 'childOf'> & {
+  /**
+   * Set childOf to 'null' to create a root span without a parent,
+   * even when a parent span exists in the current async context.
+   * If 'undefined' the parent is inferred from the async context.
+   */
+  childOf?: opentracing.Span | opentracing.SpanContext | null;
+};
+```
+
+Example:
+
+```javascript
+const tracer = require('dd-trace').init()
+
+// Create a span that is a child of the currently active span
+const span = tracer.startSpan('cache.lookup', {
+  tags: { 'cache.key': key }
+})
+
+try {
+  const value = cache.get(key)
+  return value
+} catch (err) {
+  span.setTag('error', err)
+  throw err
+} finally {
+  span.finish()
+}
+```
+
+<Warning>
+  When you use `startSpan()` directly, you are responsible for calling `span.finish()`. Forgetting to finish a span causes a memory leak and prevents the trace from being flushed.
+</Warning>
+
+## Span links
+
+Span links let you causally associate spans that are not in a parent-child relationship — for example, a span that is produced by a background job triggered by an earlier request.
+
+```typescript
+export interface Span extends opentracing.Span {
+  // Add a single link
+  addLink(link: { context: SpanContext; attributes?: Object }): void;
+
+  // Add multiple links at once
+  addLinks(links: { context: SpanContext; attributes?: Object }[]): void;
+}
+```
+
+Links are best added at span creation time, since links added after creation do not affect the sampling decision:
+
+```javascript
+const tracer = require('dd-trace').init()
+
+// The upstream span context was received from a message queue header
+const upstreamContext = tracer.extract('http_headers', messageHeaders)
+
+const span = tracer.startSpan('job.process', {
+  links: [{ context: upstreamContext, attributes: { reason: 'triggered_by' } }]
+})
+```
+
+<Note>
+  Links added via `tracer.trace()` options are equivalent to links added via `startSpan()`. Pass them in the `options.links` array using the `TraceOptions` type.
+</Note>
+
+## `tracer.wrap()` for existing functions
+
+If you want to automatically trace a function every time it is called, use `tracer.wrap()`. It returns a wrapped version of the function:
+
+```javascript
+const tracer = require('dd-trace').init()
+
+const processOrder = tracer.wrap('order.process', function (order) {
+  // This span is created automatically on every call
+  return doWork(order)
+})
+```
+
+`wrap()` supports the same span options as `trace()`:
+
+```typescript
+wrap<T = (...args: any[]) => any>(name: string, fn: T): T;
+wrap<T = (...args: any[]) => any>(
+  name: string,
+  options: tracer.TraceOptions & tracer.SpanOptions,
+  fn: T
+): T;
+```

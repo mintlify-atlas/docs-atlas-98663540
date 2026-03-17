@@ -1,0 +1,144 @@
+---
+title: "Migrating from v4 to v5"
+description: "Step-by-step guide to upgrading dd-trace from v4 to v5, including Node.js requirements, removed APIs, and CI Visibility entrypoint changes."
+---
+
+## Before you begin
+
+`dd-trace` v5 was released on 2024-01-11. v4 reached End of Life on 2025-01-11 and no longer receives updates.
+
+This guide covers every breaking change between v4 and v5. The migration is intentionally minimal — for most applications the upgrade is a Node.js version bump and a package reinstall.
+
+## Upgrade steps
+
+<Steps>
+  <Step title="Upgrade Node.js to 18 or later">
+    v5 drops support for Node.js 16, which reached EOL in September 2023. You must run Node.js 18 or later.
+
+    ```bash
+    node --version
+    # Must print v18.x.x or higher
+    ```
+
+    Refer to the [Node.js release schedule](https://nodejs.org/en/about/previous-releases) for LTS version options.
+  </Step>
+  <Step title="Install dd-trace v5">
+    ```bash
+    npm install dd-trace@5
+    ```
+
+    Or with yarn:
+
+    ```bash
+    yarn add dd-trace@5
+    ```
+  </Step>
+  <Step title="Apply any breaking changes">
+    Review each section below and update your code and CI configuration accordingly.
+  </Step>
+  <Step title="Verify in staging">
+    Run your test suite and confirm traces appear in Datadog before promoting to production.
+  </Step>
+</Steps>
+
+---
+
+## Breaking changes
+
+### Node.js 16 is no longer supported
+
+<Warning>
+  Node.js 16 reached EOL in September 2023. `dd-trace` v5 does not support it. Upgrade to Node.js 18 or later before installing v5.
+</Warning>
+
+Node.js 18 is the new minimum. Datadog recommends staying current with the [Node.js LTS schedule](https://nodejs.org/en/about/previous-releases) regardless of `dd-trace` support policy.
+
+### `trace<T>` TypeScript declaration updated
+
+The TypeScript overload for `tracer.trace(name, fn)` now enforces that the callback receives the span as its first argument. Previously, the span parameter was typed as optional even though the tracer always provides it.
+
+**Before (v4 — would compile without error):**
+
+```typescript
+tracer.trace('my.operation', () => {
+  // span not accepted as argument — compiled fine in v4
+  doWork()
+})
+```
+
+**After (v5 — span parameter is required in the type):**
+
+```typescript
+tracer.trace('my.operation', (span) => {
+  doWork()
+})
+```
+
+<Note>
+  This is a TypeScript-only change. There is no runtime behavior difference. If your callback already accepts the span argument, no change is needed.
+</Note>
+
+If you see a TypeScript compilation error after upgrading, update the callback signature to accept `span` as its first parameter:
+
+```typescript
+import tracer from 'dd-trace'
+
+tracer.trace<void>('my.operation', (span) => {
+  span.setTag('key', 'value')
+  doWork()
+})
+```
+
+---
+
+## CI Visibility entrypoint changes (v2 → v3 cleanup carried forward)
+
+<Note>
+  If you were on v4 and had already migrated your CI Visibility setup from the v3-era entrypoints, you may not need changes here. Review the entrypoints below to confirm.
+</Note>
+
+Several CI Visibility entrypoints that were deprecated in v3 are fully removed in v5. The canonical approach for all test frameworks is to pass `'-r dd-trace/ci/init'` (or `'--import dd-trace/ci/init'` for ESM) via the `NODE_OPTIONS` environment variable.
+
+### Jest
+
+Using `'dd-trace/ci/jest/env'` in the Jest `testEnvironment` config is no longer supported.
+
+**Remove** the `testEnvironment` reference and set `NODE_OPTIONS` instead:
+
+```bash
+NODE_OPTIONS='-r dd-trace/ci/init' yarn test
+```
+
+### Mocha
+
+Passing `--require dd-trace/ci/init` as a Mocha CLI flag is no longer supported.
+
+**Use `NODE_OPTIONS` instead:**
+
+```bash
+NODE_OPTIONS='-r dd-trace/ci/init' yarn test
+```
+
+### Cucumber
+
+Passing `--require-module dd-trace/ci/init` as a `cucumber-js` flag is no longer supported.
+
+**Use `NODE_OPTIONS` instead:**
+
+```bash
+NODE_OPTIONS='-r dd-trace/ci/init' yarn test
+```
+
+---
+
+## What did not change
+
+The following items from older migration guides are **not** relevant to the v4 → v5 upgrade:
+
+- No configuration options were renamed or removed
+- No plugins were removed
+- No environment variables were changed
+- No default values were altered
+- No `tracer.*` APIs were removed
+
+All changes in v5 that are not listed above are non-breaking additions or bug fixes. See the [GitHub Releases page](https://github.com/DataDog/dd-trace-js/releases) for the full changelog.

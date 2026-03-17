@@ -1,0 +1,155 @@
+---
+title: "Bundling with dd-trace"
+description: "How to use esbuild (and other bundlers) with dd-trace, and what to keep outside your bundle."
+---
+
+Bundling a Node.js application that uses dd-trace is non-trivial because dd-trace:
+
+- Uses **dynamic `require()` calls** to load instrumentation plugins at runtime based on what's actually installed.
+- Relies on **diagnostic channels** (`node:diagnostics_channel`) to communicate between the instrumentation layer and the tracer core, which assumes modules are loaded through the standard Node.js module system.
+- Includes **native addons** (e.g. `@datadog/native-metrics`, `@datadog/pprof`) that cannot be bundled at all.
+
+The safest approach is to **keep dd-trace external** to your bundle and let Node.js load it from `node_modules` as usual. When that's not possible (e.g. you're deploying a single-file artifact), use the `datadog-esbuild` plugin.
+
+## esbuild
+
+Datadog provides a first-party esbuild plugin that handles all the tricky parts.
+
+### Installation
+
+```bash
+npm install --save-dev dd-trace   # or: already a dependency
+```
+
+The plugin ships inside the `dd-trace` package itself:
+
+```javascript
+const ddPlugin = require('dd-trace/esbuild')
+```
+
+### Configuration
+
+Add the plugin to your esbuild build script:
+
+```javascript
+const esbuild = require('esbuild')
+const ddPlugin = require('dd-trace/esbuild')
+
+esbuild.build({
+  entryPoints: ['src/server.js'],
+  bundle: true,
+  outfile: 'dist/server.js',
+  platform: 'node',
+  plugins: [ddPlugin],
+}).catch(() => process.exit(1))
+```
+
+### What the plugin does
+
+<Steps>
+  <Step title="Identifies instrumented packages">
+    The plugin reads dd-trace's internal instrumentation registry to know which `node_modules` packages need special handling.
+  </Step>
+  <Step title="Wraps instrumented CJS modules">
+    For each instrumented CommonJS module, the plugin wraps the file contents in a closure that publishes to the `dd-trace:bundler:load` diagnostic channel after the module executes. This is how dd-trace hooks into the module even when it's bundled into a single file.
+  </Step>
+  <Step title="Intercepts ESM modules">
+    For ESM packages, the plugin generates a proxy module that calls `import-in-the-middle`'s `register()` to apply instrumentation hooks.
+  </Step>
+  <Step title="Injects git metadata">
+    At build time, the plugin runs `git config --get remote.origin.url` and `git rev-parse HEAD` and injects the values as `process.env.DD_GIT_REPOSITORY_URL` and `process.env.DD_GIT_COMMIT_SHA` into the bundle banner.
+  </Step>
+</Steps>
+
+### Minification requirement
+
+<Warning>
+If you enable `--minify` you **must** also enable `--keep-names`. Minifying function names breaks dd-trace's instrumentation, which relies on function names for some detection. The plugin throws an error if you attempt to bundle with `minify: true` and `keepNames: false`.
+</Warning>
+
+```javascript
+esbuild.build({
+  // ...
+  minify: true,
+  keepNames: true, // required when minify is true
+  plugins: [ddPlugin],
+})
+```
+
+### ESM output
+
+When the build output format is ESM (`format: 'esm'`, `outfile` ending in `.mjs`, or `outExtension: { '.js': '.mjs' }`), the plugin automatically injects a CJS compatibility banner:
+
+```javascript
+import { createRequire as $dd_createRequire } from 'module';
+import { fileURLToPath as $dd_fileURLToPath } from 'url';
+import { dirname as $dd_dirname } from 'path';
+globalThis.require ??= $dd_createRequire(import.meta.url);
+globalThis.__filename ??= $dd_fileURLToPath(import.meta.url);
+globalThis.__dirname ??= $dd_dirname(globalThis.__filename);
+```
+
+This allows dd-trace's CJS internals to function correctly inside an ESM bundle.
+
+## Webpack
+
+Webpack is not officially supported. The dynamic `require()` patterns and diagnostic channel communication model are difficult to express in Webpack's static analysis model.
+
+If you must use Webpack:
+
+- Mark `dd-trace` as external: `externals: { 'dd-trace': 'commonjs dd-trace' }`
+- Similarly externalize any native addon packages
+
+This approach means dd-trace is not bundled but loaded from `node_modules` at runtime — effectively the same as not bundling it at all, which is the recommended approach.
+
+## Rollup
+
+Rollup has similar constraints to Webpack. The recommended approach is to externalize dd-trace:
+
+```javascript
+// rollup.config.js
+export default {
+  input: 'src/server.js',
+  output: { file: 'dist/server.js', format: 'cjs' },
+  external: [
+    'dd-trace',
+    '@datadog/native-metrics',
+    '@datadog/pprof',
+    '@datadog/native-appsec',
+    '@datadog/native-iast-taint-tracking',
+  ],
+}
+```
+
+## What cannot be bundled
+
+Native addons are compiled binary `.node` files. They cannot be inlined into a JavaScript bundle and must be present on disk at runtime:
+
+| Package | Purpose |
+|---------|---------|
+| `@datadog/native-metrics` | Runtime metrics (CPU, heap) |
+| `@datadog/pprof` | Continuous profiling |
+| `@datadog/native-appsec` | Application Security WAF |
+| `@datadog/native-iast-taint-tracking` | IAST taint tracking |
+| `@datadog/native-iast-rewriter` | IAST rewriting |
+
+These are optional dependencies. If they're not resolvable at runtime, dd-trace logs a warning and disables the corresponding feature — it won't crash your application.
+
+<Tip>
+When deploying a bundled application, copy the entire `node_modules` directory alongside the bundle, or at minimum copy the native addon packages that correspond to the dd-trace features you use.
+</Tip>
+
+## Disabling auto-instrumentation for unused libraries
+
+Bundling tree-shakes your application code but dd-trace's plugin registry still enumerates all known instrumented packages. To reduce overhead, disable plugins for libraries you don't use:
+
+```javascript
+const tracer = require('dd-trace').init({
+  // Disable all plugins, then opt in to what you need:
+  plugins: false,
+})
+
+tracer.use('http')
+tracer.use('express')
+tracer.use('pg')
+```

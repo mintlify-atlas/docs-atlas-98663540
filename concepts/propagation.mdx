@@ -1,0 +1,249 @@
+---
+title: "Context Propagation"
+description: "Learn how dd-trace passes trace context across service boundaries using standard propagation formats."
+---
+
+## What is context propagation?
+
+When a request leaves one service and enters another — over HTTP, a message queue, or gRPC — the trace context (trace ID, parent span ID, sampling decision) must travel with it. This is **context propagation**.
+
+Without propagation, each service would create an independent trace and you would see fragmented, disconnected spans instead of a single end-to-end trace.
+
+```
+Service A                    Service B
+──────────────────────       ──────────────────────
+span: web.request     ──→    span: web.request
+  trace_id: abc123             trace_id: abc123   ← same trace!
+  span_id:  111                parent_id: 111     ← linked!
+```
+
+For supported libraries (Express, Fastify, kafkajs, etc.) dd-trace handles inject and extract automatically. You only need to call these APIs when building custom transports.
+
+## Supported formats
+
+dd-trace supports four propagation formats, each identified by a string key:
+
+| Format | Header style | Standard |
+|--------|-------------|----------|
+| `datadog` | `x-datadog-trace-id`, `x-datadog-parent-id`, `x-datadog-sampling-priority` | Datadog proprietary |
+| `tracecontext` | `traceparent`, `tracestate` | W3C Trace Context |
+| `b3multi` | `x-b3-traceid`, `x-b3-spanid`, `x-b3-sampled`, … | OpenZipkin B3 multi-header |
+| `b3` | `b3` (single header) | OpenZipkin B3 single-header |
+| `baggage` | `baggage` | W3C Baggage |
+
+The `tracePropagationStyle` option controls which formats are used for injection and which are tried (in order) for extraction:
+
+```typescript
+export interface PropagationStyle {
+  /** Formats to inject into outgoing carriers. */
+  inject: string[];
+  /** Formats to try when extracting from incoming carriers, in priority order. */
+  extract: string[];
+}
+```
+
+## Configuring propagation styles
+
+Pass `tracePropagationStyle` to `tracer.init()`:
+
+```javascript
+const tracer = require('dd-trace').init({
+  tracePropagationStyle: {
+    inject: ['datadog', 'tracecontext'],
+    extract: ['datadog', 'tracecontext', 'b3multi'],
+  }
+})
+```
+
+Or use the environment variables:
+
+```bash
+# Set both inject and extract at once
+DD_TRACE_PROPAGATION_STYLE=datadog,tracecontext node app.js
+
+# Or independently
+DD_TRACE_PROPAGATION_STYLE_INJECT=datadog,tracecontext
+DD_TRACE_PROPAGATION_STYLE_EXTRACT=datadog,tracecontext,b3multi
+```
+
+<Tip>
+  Enable `tracecontext` alongside `datadog` when your services communicate with OpenTelemetry-instrumented services. Both sides can then read each other's headers.
+</Tip>
+
+## The `inject` API
+
+`tracer.inject()` writes the current span context into a **carrier** — any object you choose. For HTTP requests the carrier is the headers object.
+
+```typescript
+inject(
+  spanContext: tracer.SpanContext | tracer.Span,
+  format: string,
+  carrier: any
+): void;
+```
+
+Example with the Node.js `http` module:
+
+```javascript
+const tracer = require('dd-trace').init()
+const http = require('http')
+
+function makeRequest(url) {
+  const span = tracer.scope().active()
+  const headers = {}
+
+  if (span) {
+    tracer.inject(span, 'http_headers', headers)
+  }
+
+  const req = http.request({ ...parseUrl(url), headers })
+  // ...
+}
+```
+
+For custom message carriers:
+
+```javascript
+const message = { payload: data, headers: {} }
+tracer.inject(tracer.scope().active(), 'text_map', message.headers)
+await queue.send(message)
+```
+
+## The `extract` API
+
+`tracer.extract()` reads a span context from an incoming carrier. The returned `SpanContext` can then be used as the `childOf` parent for the first span in the receiving service.
+
+```typescript
+extract(format: string, carrier: any): tracer.SpanContext | null;
+```
+
+Example:
+
+```javascript
+const tracer = require('dd-trace').init()
+
+function handleMessage(message) {
+  const parentContext = tracer.extract('text_map', message.headers)
+
+  tracer.trace('job.process', { childOf: parentContext }, (span) => {
+    // This span is linked to the upstream trace
+    processPayload(message.payload)
+  })
+}
+```
+
+<Note>
+  `extract()` returns `null` if no valid trace context is found in the carrier. Always null-check the result before using it as `childOf`.
+</Note>
+
+## Format constants
+
+Use the format constants from `dd-trace/ext/formats` rather than bare strings to avoid typos:
+
+```javascript
+const formats = require('dd-trace/ext/formats')
+// formats.TEXT_MAP     = 'text_map'
+// formats.HTTP_HEADERS = 'http_headers'
+// formats.BINARY       = 'binary'
+// formats.LOG          = 'log'
+
+tracer.inject(span, formats.HTTP_HEADERS, req.headers)
+const ctx = tracer.extract(formats.HTTP_HEADERS, req.headers)
+```
+
+## W3C Trace Context headers
+
+When using the `tracecontext` format, dd-trace injects `traceparent` and `tracestate` headers. The `tracestate` carries Datadog-specific data (sampling priority, origin, trace tags) in the `dd` vendor namespace.
+
+Example injected headers:
+
+```
+traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
+tracestate:  dd=s:1;p:00f067aa0ba902b7;t.dm:-4
+```
+
+The `traceparent` format is `{version}-{trace-id}-{parent-id}-{flags}`.
+
+## Baggage API (experimental)
+
+Baggage is arbitrary key-value data that propagates alongside the trace context. It is useful for passing request-scoped metadata (such as tenant ID or feature flags) to downstream services without threading it through your function signatures.
+
+<Warning>
+  The baggage API is experimental. Its behavior may change in future versions.
+</Warning>
+
+From the TypeScript definitions in `index.d.ts`:
+
+```typescript
+interface Tracer {
+  /**
+   * Sets a baggage item in the current context and returns the new baggage.
+   * @experimental
+   */
+  setBaggageItem(key: string, value: string, metadata?: object): Record<string, string>;
+
+  /**
+   * Returns a specific baggage item from the current context.
+   * @experimental
+   */
+  getBaggageItem(key: string): string | undefined;
+
+  /**
+   * Returns all baggage items from the current context.
+   * @experimental
+   */
+  getAllBaggageItems(): Record<string, string>;
+
+  /**
+   * Removes a specific baggage item from the current context.
+   * @experimental
+   */
+  removeBaggageItem(key: string): Record<string, string>;
+
+  /**
+   * Removes all baggage items from the current context.
+   * @experimental
+   */
+  removeAllBaggageItems(): Record<string, string>;
+}
+```
+
+Example:
+
+```javascript
+const tracer = require('dd-trace').init()
+
+// In the entry-point service, attach the tenant ID to baggage
+tracer.trace('web.request', (span) => {
+  tracer.setBaggageItem('tenant.id', req.tenantId)
+
+  // Call downstream — baggage is propagated automatically
+  // when the 'baggage' format is in tracePropagationStyle.inject
+  return callDownstream(req)
+})
+```
+
+```javascript
+// In the downstream service, read the baggage
+tracer.trace('rpc.handle', (span) => {
+  const tenantId = tracer.getBaggageItem('tenant.id')
+  span.setTag('tenant.id', tenantId)
+})
+```
+
+To enable baggage propagation, include `'baggage'` in your inject and extract styles:
+
+```javascript
+const tracer = require('dd-trace').init({
+  tracePropagationStyle: {
+    inject: ['datadog', 'tracecontext', 'baggage'],
+    extract: ['datadog', 'tracecontext', 'baggage'],
+  }
+})
+```
+
+Baggage is transmitted in the W3C `baggage` header:
+
+```
+baggage: tenant.id=acme-corp,feature.flag=new-checkout
+```

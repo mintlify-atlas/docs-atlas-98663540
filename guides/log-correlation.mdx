@@ -1,0 +1,160 @@
+---
+title: "Log Correlation"
+description: "Automatically inject trace and span IDs into your logs so you can jump from a log line directly to the corresponding trace in Datadog."
+---
+
+Log correlation adds trace context fields to every log record produced while a span is active. In Datadog Log Management, these fields become clickable links that take you straight to the trace view — without manually matching timestamps.
+
+The injected fields are:
+
+| Field | Source |
+|-------|--------|
+| `dd.trace_id` | Active span's trace ID |
+| `dd.span_id` | Active span's span ID |
+| `dd.service` | `DD_SERVICE` / `tracer.init({ service })` |
+| `dd.version` | `DD_VERSION` / `tracer.init({ version })` |
+| `dd.env` | `DD_ENV` / `tracer.init({ env })` |
+
+## Enabling log injection
+
+<Tabs>
+  <Tab title="Environment variable">
+    ```bash
+    DD_LOGS_INJECTION=true node server.js
+    ```
+  </Tab>
+  <Tab title="Code">
+    ```javascript
+    const tracer = require('dd-trace').init({
+      logInjection: true,
+    })
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+Initialize `dd-trace` before importing your logger. Auto-instrumentation patches the logger at `require()` time, so the logger must be loaded after `dd-trace` is initialized.
+</Warning>
+
+## Automatic injection
+
+When `logInjection: true` is set, dd-trace automatically injects trace context into log records for the following loggers.
+
+### pino
+
+```javascript
+const tracer = require('dd-trace').init({ logInjection: true })
+const pino = require('pino')
+
+const logger = pino()
+
+// The 'dd' field is automatically merged into every log record
+logger.info('order placed') 
+// → { "level":30, "msg":"order placed", "dd":{"trace_id":"...","span_id":"...","service":"...","env":"...","version":"..."} }
+```
+
+### winston
+
+```javascript
+const tracer = require('dd-trace').init({ logInjection: true })
+const winston = require('winston')
+
+const logger = winston.createLogger({
+  transports: [new winston.transports.Console()],
+  format: winston.format.json(),
+})
+
+logger.info('payment processed')
+// → { "message":"payment processed", "dd":{"trace_id":"...","span_id":"...","service":"...","env":"...","version":"..."} }
+```
+
+### bunyan
+
+```javascript
+const tracer = require('dd-trace').init({ logInjection: true })
+const bunyan = require('bunyan')
+
+const logger = bunyan.createLogger({ name: 'my-app' })
+
+logger.info('request received')
+// → { "name":"my-app", "msg":"request received", "dd":{"trace_id":"...","span_id":"...", ...} }
+```
+
+### log4js
+
+```javascript
+const tracer = require('dd-trace').init({ logInjection: true })
+const log4js = require('log4js')
+
+log4js.configure({ appenders: { out: { type: 'stdout' } }, categories: { default: { appenders: ['out'], level: 'info' } } })
+const logger = log4js.getLogger()
+
+logger.info('cache hit')
+```
+
+## Manual injection
+
+If you're using a logger that dd-trace doesn't auto-instrument, or you need to inject trace context into a structured field manually, use `tracer.scope().active()` to get the current span context.
+
+```javascript
+const tracer = require('dd-trace').init()
+const logger = require('my-custom-logger')
+
+function logWithTrace(level, message, meta = {}) {
+  const span = tracer.scope().active()
+
+  if (span) {
+    const context = span.context()
+    meta.dd = {
+      trace_id: context.toTraceId(),
+      span_id: context.toSpanId(),
+      service: tracer._service,
+      env: tracer._env,
+      version: tracer._version,
+    }
+  }
+
+  logger[level](message, meta)
+}
+
+logWithTrace('info', 'user signed in', { user_id: 42 })
+```
+
+### toTraceId() and toSpanId()
+
+The `SpanContext` object exposes two string-formatting methods:
+
+- `context.toTraceId()` — returns the trace ID as a decimal string. When 128-bit trace IDs are enabled and `traceId128BitLoggingEnabled: true`, this returns the full 32-character hex string so Datadog Log Management can correlate correctly.
+- `context.toSpanId()` — returns the span ID as a decimal string.
+
+```javascript
+const span = tracer.scope().active()
+if (span) {
+  const ctx = span.context()
+  console.log(ctx.toTraceId()) // e.g. '7291165488438098777'
+  console.log(ctx.toSpanId())  // e.g. '3635599222477952853'
+}
+```
+
+## Log format for Datadog Log Management
+
+Datadog expects trace context to be nested under a `dd` key:
+
+```json
+{
+  "message": "checkout complete",
+  "dd": {
+    "trace_id": "7291165488438098777",
+    "span_id": "3635599222477952853",
+    "service": "checkout-service",
+    "env": "production",
+    "version": "1.4.2"
+  }
+}
+```
+
+The automatic injection by all supported loggers produces exactly this format.
+
+<Tip>
+Make sure `DD_LOGS_INJECTION=true` is set alongside your log pipeline configuration in the Datadog Agent so the Agent knows to look for these fields when ingesting logs.
+</Tip>

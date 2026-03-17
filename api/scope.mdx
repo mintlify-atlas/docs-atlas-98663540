@@ -1,0 +1,193 @@
+---
+title: "Scope"
+description: "The Scope manager provides async-context-aware access to the active span. It lets you get, activate, and bind spans across synchronous and asynchronous boundaries."
+---
+
+dd-trace maintains an _async-local_ scope so that child operations can automatically find their parent span without passing it around explicitly. The `Scope` object is the API surface for interacting with that context.
+
+In most cases you do not need to use the scope manager directly — `tracer.trace()` and `tracer.wrap()` handle activation for you. Use the scope manager when you need to:
+
+- Read the currently active span to attach tags from middleware.
+- Bridge a context gap caused by frameworks that do not preserve async context (e.g. internal task queues, some event emitters).
+- Bind a callback to a specific span that should stay active when the callback fires.
+
+## Getting the scope
+
+```javascript
+const tracer = require('dd-trace').init()
+const scope = tracer.scope()
+```
+
+---
+
+## active
+
+Returns the currently active span, or `null` if no span is active in the current async context.
+
+```typescript
+active(): Span | null
+```
+
+<ResponseField name="returns" type="Span | null">
+  The active span, or `null` if none is active.
+</ResponseField>
+
+```javascript
+const tracer = require('dd-trace').init()
+const scope = tracer.scope()
+
+app.use((req, res, next) => {
+  const span = scope.active()
+  if (span) {
+    span.setTag('user.id', req.user?.id)
+  }
+  next()
+})
+```
+
+---
+
+## activate
+
+Runs a function with the provided span set as the active span. Any asynchronous context started inside `fn` — promises, timeouts, callbacks — also sees the span as active.
+
+```typescript
+activate<T>(span: Span, fn: ((...args: any[]) => T)): T
+```
+
+<ParamField path="span" type="Span" required>
+  The span to activate.
+</ParamField>
+
+<ParamField path="fn" type="() => T" required>
+  The function to execute with the span active. Can be synchronous or return a promise.
+</ParamField>
+
+<ResponseField name="returns" type="T">
+  The return value of `fn`.
+</ResponseField>
+
+<Note>
+If `fn` throws, the error is set on the span automatically, then re-thrown.
+</Note>
+
+```javascript
+const tracer = require('dd-trace').init()
+const scope = tracer.scope()
+
+const requestSpan = tracer.startSpan('web.request')
+
+scope.activate(requestSpan, () => {
+  console.log(scope.active()) // requestSpan
+
+  setTimeout(() => {
+    console.log(scope.active()) // still requestSpan
+  }, 100)
+
+  Promise.resolve().then(() => {
+    console.log(scope.active()) // still requestSpan
+  })
+})
+
+console.log(scope.active()) // null — outside the activated scope
+```
+
+---
+
+## bind
+
+Binds a function (or promise) to a span, so that the span is active whenever the function is called, regardless of when or where it is invoked.
+
+```typescript
+bind<T extends (...args: any[]) => void>(fn: T, span?: Span | null): T
+bind<V, T extends (...args: any[]) => V>(fn: T, span?: Span | null): T
+bind<T>(fn: Promise<T>, span?: Span | null): Promise<T>
+```
+
+<ParamField path="fn" type="Function | Promise" required>
+  The function or promise to bind.
+</ParamField>
+
+<ParamField path="span" type="Span | null">
+  The span to bind to. Defaults to the currently active span when `bind()` is called. Pass `null` to explicitly bind to no span.
+</ParamField>
+
+<ResponseField name="returns" type="Function | Promise">
+  A new function (or promise) that activates the bound span when called/resolved.
+</ResponseField>
+
+```javascript
+const tracer = require('dd-trace').init()
+const scope = tracer.scope()
+
+const outerSpan = tracer.startSpan('web.request')
+
+scope.activate(outerSpan, () => {
+  const innerSpan = tracer.startSpan('web.middleware')
+
+  // Explicitly bound to innerSpan
+  const boundToInner = scope.bind(() => {
+    console.log(scope.active()) // innerSpan
+  }, innerSpan)
+
+  // Implicitly bound to outerSpan (active at time of bind call)
+  const boundToOuter = scope.bind(() => {
+    console.log(scope.active()) // outerSpan
+  })
+
+  boundToInner()
+  boundToOuter()
+
+  innerSpan.finish()
+})
+
+outerSpan.finish()
+```
+
+---
+
+## Use cases
+
+### Reading the active span in middleware
+
+```javascript
+app.use((req, res, next) => {
+  const span = tracer.scope().active()
+  if (span) {
+    span.setTag('tenant.id', req.headers['x-tenant-id'])
+  }
+  next()
+})
+```
+
+### Bridging a context gap
+
+Some patterns — like internal task queues processed by a `setInterval` — lose the async context that was active when the task was enqueued. Use `scope.bind()` to capture the context at enqueue time:
+
+```javascript
+const queue = []
+
+function enqueue(task) {
+  // Bind the task to the span that is active RIGHT NOW (at enqueue time)
+  queue.push(tracer.scope().bind(task))
+}
+
+setInterval(() => {
+  const task = queue.shift()
+  if (task) task() // span from enqueue time is active inside task()
+}, 100)
+```
+
+### Manually activating a span across an async boundary
+
+```javascript
+const span = tracer.startSpan('background.job')
+
+asyncQueue.push(() => {
+  tracer.scope().activate(span, () => {
+    // span is active here, even though we are in a different async context
+    doWork()
+    span.finish()
+  })
+})
+```

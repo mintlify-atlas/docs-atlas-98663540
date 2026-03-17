@@ -1,0 +1,416 @@
+---
+title: "Plugin options reference"
+description: "Configuration options for dd-trace's built-in instrumentation plugins."
+---
+
+Built-in plugins instrument popular libraries automatically. You can configure them at initialization time via `tracer.init()` options or after initialization using `tracer.use()`.
+
+<CodeGroup>
+
+```javascript tracer.init()
+const tracer = require('dd-trace').init()
+// plugins are configured via tracer.use() below
+```
+
+```javascript tracer.use()
+const tracer = require('dd-trace').init()
+
+tracer.use('pg', {
+  service: 'pg-primary',
+  dbmPropagationMode: 'full',
+})
+
+tracer.use('express', {
+  middleware: true,
+  hooks: {
+    request: (span, req, res) => {
+      span.setTag('customer.id', req.headers['x-customer-id'])
+    },
+  },
+})
+```
+
+</CodeGroup>
+
+Pass `false` to disable a plugin entirely:
+
+```javascript
+tracer.use('fs', false)
+```
+
+---
+
+## Base plugin options
+
+All plugins extend the base `Integration` interface:
+
+<ParamField path="enabled" type="boolean" default="true">
+  Whether to enable the plugin.
+</ParamField>
+
+<ParamField path="service" type="string | any">
+  Override the service name for spans produced by this plugin.
+</ParamField>
+
+Most plugins also extend `Instrumentation`, which adds:
+
+<ParamField path="measured" type="boolean | { [key: string]: boolean }">
+  Whether to measure the span. Pass a key-value object for per-operation-name control.
+</ParamField>
+
+---
+
+## HTTP server options
+
+Plugins for HTTP server frameworks (Express, Fastify, Hapi, Koa, Restify, connect, hono, microgateway-core, next, web) share these options:
+
+<ParamField path="allowlist" type="string | RegExp | Function | Array">
+  List of paths that should be instrumented. Entries are matched against the inbound path (e.g. `/api/users`). Defaults to all paths.
+</ParamField>
+
+<ParamField path="blocklist" type="string | RegExp | Function | Array">
+  List of paths that should not be instrumented. Takes precedence over `allowlist`.
+</ParamField>
+
+<ParamField path="filter" type="(urlOrPath: string) => boolean">
+  Custom filter function. When provided, takes precedence over `allowlist`/`blocklist`. Return `true` to instrument the request.
+</ParamField>
+
+<ParamField path="headers" type="string[]" default="[]">
+  HTTP headers to include as span tags.
+</ParamField>
+
+<ParamField path="validateStatus" type="(code: number) => boolean" default="code => code < 500">
+  Callback to determine whether a status code is an error. Return `true` for success, `false` for error.
+</ParamField>
+
+<ParamField path="hooks" type="object">
+  Callbacks executed just before a span finishes.
+
+  <Expandable title="hooks">
+    <ParamField path="request" type="(span?, req?, res?) => any">
+      Called just before the request span finishes.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="middleware" type="boolean" default="true">
+  Whether to instrument middleware spans.
+</ParamField>
+
+<ParamField path="queryStringObfuscation" type="boolean | string | RegExp">
+  Whether (or how) to obfuscate querystring values in `http.url`:
+  - `true`: obfuscate all values.
+  - `false`: disable obfuscation.
+  - `string` or `RegExp`: obfuscate values matching the pattern.
+</ParamField>
+
+<ParamField path="resourceRenamingEnabled" type="boolean">
+  Enable resource renaming when a framework route is unavailable.
+</ParamField>
+
+---
+
+## HTTP client options
+
+Plugins for HTTP client libraries (http, https, fetch, undici) share these options:
+
+<ParamField path="allowlist" type="string | RegExp | Function | Array">
+  List of outbound URLs to instrument. Entries are matched against the full URL (e.g. `https://api.example.com/v1/users`).
+</ParamField>
+
+<ParamField path="blocklist" type="string | RegExp | Function | Array">
+  List of outbound URLs to exclude from instrumentation.
+</ParamField>
+
+<ParamField path="filter" type="(url: string) => boolean">
+  Custom filter function. Return `true` to instrument the request.
+</ParamField>
+
+<ParamField path="headers" type="string[]" default="[]">
+  HTTP headers to capture as span tags.
+</ParamField>
+
+<ParamField path="validateStatus" type="(code: number) => boolean" default="code => code < 400 || code >= 500">
+  Callback to determine whether a status code is an error.
+</ParamField>
+
+<ParamField path="splitByDomain" type="boolean" default="false">
+  Use the remote endpoint host as the service name.
+</ParamField>
+
+<ParamField path="propagationBlocklist" type="string | RegExp | Function | Array">
+  List of URLs to which propagation headers should not be injected.
+</ParamField>
+
+<ParamField path="hooks" type="object">
+  <Expandable title="hooks">
+    <ParamField path="request" type="(span?, req?, res?) => any">
+      Called just before the request span finishes.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+---
+
+## Database plugin options
+
+Database plugins (pg, mysql, mysql2, mongodb-core, redis, ioredis, cassandra-driver, elasticsearch, opensearch) extend the base options. Key database-specific options:
+
+<ParamField path="service" type="string | ((params: any) => string)">
+  Override the service name. For pg, mysql, mysql2, and oracledb, you can pass a function that receives connection parameters and returns a service name.
+
+  ```javascript
+  tracer.use('pg', {
+    service: (params) => `pg-${params.database}`,
+  })
+  ```
+</ParamField>
+
+<ParamField path="dbmPropagationMode" type="'disabled' | 'service' | 'full'">
+  Database Monitoring propagation mode for this plugin (pg only). Overrides the global `dbmPropagationMode` setting.
+</ParamField>
+
+<ParamField path="appendComment" type="boolean">
+  Append the SQL comment propagation tag to the query string (pg only). Prepends if `false`. Appended comments may be truncated for long queries.
+</ParamField>
+
+---
+
+## Per-plugin reference
+
+<AccordionGroup>
+  <Accordion title="express / fastify / hapi / koa / restify / connect / hono / next">
+    These plugins extend HTTP server options. See [HTTP server options](#http-server-options) for the full list.
+
+    ```javascript
+    tracer.use('express', {
+      service: 'my-web-server',
+      middleware: true,
+      hooks: {
+        request: (span, req, res) => {
+          span.setTag('user.id', req.user?.id)
+        },
+      },
+    })
+    ```
+  </Accordion>
+
+  <Accordion title="http / http2">
+    Both extend their respective client and server options and can be configured separately:
+
+    ```javascript
+    tracer.use('http', {
+      client: {
+        splitByDomain: true,
+        propagationBlocklist: [/^https:\/\/internal-auth\.example\.com/],
+      },
+      server: {
+        validateStatus: (code) => code < 500,
+        hooks: {
+          request: (span, req, res) => {
+            span.setTag('request.id', req.headers['x-request-id'])
+          },
+        },
+      },
+    })
+    ```
+  </Accordion>
+
+  <Accordion title="graphql">
+    ```typescript
+    interface graphql extends Instrumentation {
+      depth?: number;       // max resolver depth (-1 = all, 0 = operation only)
+      source?: boolean;     // include query source in span (default: false)
+      variables?: string[] | ((vars) => object); // variables to record
+      collapse?: boolean;   // collapse list items (default: true)
+      signature?: boolean;  // enable signature calculation (default: true)
+      hooks?: {
+        execute?: (span?, args?, res?) => void;
+        validate?: (span?, document?, errors?) => void;
+        parse?: (span?, source?, document?) => void;
+      };
+    }
+    ```
+
+    ```javascript
+    tracer.use('graphql', {
+      depth: 3,
+      variables: ['userId', 'orderId'],
+    })
+    ```
+  </Accordion>
+
+  <Accordion title="pg">
+    ```typescript
+    interface pg extends Instrumentation {
+      service?: string | ((params: any) => string);
+      dbmPropagationMode?: string;
+      appendComment?: boolean;
+    }
+    ```
+
+    ```javascript
+    tracer.use('pg', {
+      service: 'pg-cluster',
+      dbmPropagationMode: 'full',
+    })
+    ```
+  </Accordion>
+
+  <Accordion title="redis / ioredis / iovalkey">
+    These plugins share allowlist/blocklist/filter options for controlling which commands are instrumented:
+
+    ```typescript
+    interface redis extends Instrumentation {
+      allowlist?: string | RegExp | ((command: string) => boolean) | Array<...>;
+      blocklist?: string | RegExp | ((command: string) => boolean) | Array<...>;
+      filter?: (command: string) => boolean;
+    }
+    ```
+
+    `ioredis` and `iovalkey` additionally support:
+
+    ```typescript
+      splitByInstance?: boolean; // use connection name as service name (default: false)
+    ```
+
+    ```javascript
+    tracer.use('ioredis', {
+      blocklist: ['auth', 'quit'],
+      splitByInstance: true,
+    })
+    ```
+  </Accordion>
+
+  <Accordion title="aws-sdk">
+    ```typescript
+    interface aws_sdk extends Instrumentation {
+      batchPropagationEnabled?: boolean; // inject all messages in batch operations (default: false)
+      hooks?: {
+        request?: (span?, response?) => any;
+      };
+      [key: string]: boolean | Object | undefined; // per-service enable/disable
+    }
+    ```
+
+    ```javascript
+    tracer.use('aws-sdk', {
+      batchPropagationEnabled: true,
+      SQS: { producer: true, consumer: false },
+    })
+    ```
+  </Accordion>
+
+  <Accordion title="grpc">
+    ```typescript
+    interface grpc extends Instrumentation {
+      metadata?: string[] | ((variables) => object);
+      client?: Grpc;
+      server?: Grpc;
+    }
+    ```
+
+    ```javascript
+    tracer.use('grpc', {
+      metadata: ['authorization'],
+      client: { enabled: true },
+      server: { enabled: true },
+    })
+    ```
+  </Accordion>
+
+  <Accordion title="moleculer">
+    ```typescript
+    interface moleculer extends Instrumentation {
+      meta?: boolean; // include context meta as tags (default: false)
+      client?: boolean | Moleculer;
+      server?: boolean | Moleculer;
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="elasticsearch / opensearch">
+    ```typescript
+    interface elasticsearch extends Instrumentation {
+      hooks?: {
+        query?: (span?, params?) => any;
+      };
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="mongodb-core">
+    ```typescript
+    interface mongodb_core extends Instrumentation {
+      heartbeatEnabled?: boolean;      // enable heartbeat spans (default: true)
+      queryInResourceName?: boolean;   // include query in resource name
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="kafkajs / confluentinc-kafka-javascript">
+    Both extend `Instrumentation` with no additional configuration options.
+
+    ```javascript
+    tracer.use('kafkajs', { service: 'my-kafka' })
+    ```
+  </Accordion>
+
+  <Accordion title="apollo">
+    ```typescript
+    interface apollo extends Instrumentation {
+      source?: boolean;    // include operation source (default: false)
+      signature?: boolean; // enable signature calculation (default: true)
+      hooks?: {
+        request?: (span?, ctx?) => void;
+        validate?: (span?, ctx?) => void;
+        plan?: (span?, ctx?) => void;
+        execute?: (span?, ctx?) => void;
+        fetch?: (span?, ctx?) => void;
+        postprocessing?: (span?, ctx?) => void;
+      };
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="next">
+    ```typescript
+    interface next extends Instrumentation {
+      hooks?: {
+        request?: (span?, req?, res?) => any;
+      };
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="ws (WebSocket)">
+    ```typescript
+    interface ws extends Instrumentation {
+      traceWebsocketMessagesEnabled?: boolean; // trace WebSocket messages
+    }
+    ```
+
+    **Env:** `DD_TRACE_WEBSOCKET_MESSAGES_ENABLED`
+  </Accordion>
+
+  <Accordion title="sharedb">
+    ```typescript
+    interface sharedb extends Integration {
+      hooks?: {
+        receive?: (span?, request?) => any;
+        reply?: (span?, request?, response?) => any;
+      };
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="prisma">
+    ```typescript
+    interface prisma extends Instrumentation {
+      client?: PrismaClient | boolean;
+      engine?: PrismaEngine | boolean;
+    }
+    ```
+  </Accordion>
+</AccordionGroup>

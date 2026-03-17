@@ -1,0 +1,257 @@
+---
+title: "Integrations overview"
+description: "How dd-trace automatically instruments 100+ Node.js libraries through its plugin system, with zero code changes."
+keywords: ["dd-trace", "integrations", "plugins", "automatic instrumentation", "nodejs"]
+---
+
+# Integrations overview
+
+dd-trace ships with built-in plugins for over 100 popular Node.js libraries. When your application loads a supported package, the tracer automatically patches it to capture spans, propagate context, and report metadata to Datadog — no code changes required.
+
+## How the plugin system works
+
+Every supported library corresponds to a named plugin. When you call `tracer.init()`, all built-in plugins are enabled by default. As soon as your code imports a supported module, the plugin intercepts it using Node.js's module loading hooks and diagnostic channels.
+
+Each plugin:
+- Creates spans around key operations (HTTP requests, database queries, message publishes, etc.).
+- Propagates distributed trace context across service and process boundaries.
+- Attaches relevant metadata as span tags (service name, resource, error status, etc.).
+
+## Configure a plugin
+
+Call `tracer.use()` with the plugin name and an options object. Call this **before** importing the library you want to configure.
+
+```javascript
+const tracer = require('dd-trace').init()
+
+// Configure the PostgreSQL plugin
+tracer.use('pg', {
+  service: 'pg-main',
+  dbmPropagationMode: 'full'
+})
+
+const { Client } = require('pg')
+```
+
+You can also configure plugins inside the `init()` call using the `plugins` option:
+
+```javascript
+const tracer = require('dd-trace').init({
+  plugins: true // enable all built-in plugins (default)
+})
+```
+
+To disable all built-in plugins and enable only specific ones:
+
+```javascript
+const tracer = require('dd-trace').init({
+  plugins: false // disable all built-in plugins
+})
+
+// Enable only the plugins you need
+tracer.use('express')
+tracer.use('pg')
+```
+
+## Disable a specific plugin
+
+Pass `{ enabled: false }` to `tracer.use()` for the plugin you want to turn off:
+
+```javascript
+const tracer = require('dd-trace').init()
+
+// Disable the DNS plugin
+tracer.use('dns', { enabled: false })
+```
+
+Alternatively, use the environment variable pattern `DD_TRACE_<PLUGIN>_ENABLED=false`. Replace hyphens with underscores and uppercase the plugin name:
+
+```bash
+# Disable the fs plugin
+DD_TRACE_FS_ENABLED=false node app.js
+
+# Disable the DNS plugin
+DD_TRACE_DNS_ENABLED=false node app.js
+
+# Disable the kafkajs plugin
+DD_TRACE_KAFKAJS_ENABLED=false node app.js
+```
+
+<Warning>
+Disabling plugins can cause unexpected side effects such as broken context propagation. Leave plugins enabled unless you have a specific reason to disable them.
+</Warning>
+
+## Use span hooks
+
+Web framework plugins expose a `hooks.request` callback that runs just before the request span finishes. Use it to attach custom tags without writing a custom instrumentation layer:
+
+```javascript
+const tracer = require('dd-trace').init()
+
+tracer.use('express', {
+  hooks: {
+    request: (span, req, res) => {
+      span.setTag('customer.id', req.query.customerId)
+      span.setTag('tenant', req.headers['x-tenant-id'])
+    }
+  }
+})
+```
+
+## Integration categories
+
+<Columns cols={2}>
+  <Card title="Web frameworks" icon="globe" href="/integrations/web-frameworks">
+    Express, Fastify, Koa, Hapi, Restify, Next.js, Connect, Hono, Moleculer, and more.
+  </Card>
+  <Card title="Databases" icon="database" href="/integrations/databases">
+    PostgreSQL, MySQL, MongoDB, Redis, Elasticsearch, Cassandra, Prisma, and more.
+  </Card>
+  <Card title="Message queues" icon="arrow-right-arrow-left" href="/integrations/message-queues">
+    Kafka, RabbitMQ, AWS SQS/SNS, Google Cloud Pub/Sub, BullMQ, Azure Event Hubs, and more.
+  </Card>
+  <Card title="AI & ML" icon="sparkles" href="/integrations/ai-ml">
+    OpenAI, Anthropic, LangChain, LangGraph, Vertex AI, Google GenAI, and AWS Bedrock.
+  </Card>
+</Columns>
+
+## All supported integrations
+
+The following table lists every plugin included with dd-trace. Each row shows the plugin name you pass to `tracer.use()` and the corresponding npm package.
+
+<AccordionGroup>
+  <Accordion title="Web frameworks">
+    | Plugin name | npm package |
+    |---|---|
+    | `connect` | `connect` |
+    | `express` | `express` |
+    | `fastify` | `fastify` |
+    | `hapi` | `@hapi/hapi` |
+    | `hono` | `hono` |
+    | `koa` | `koa` |
+    | `microgateway-core` | `@apigee/microgateway-core` |
+    | `moleculer` | `moleculer` |
+    | `next` | `next` |
+    | `restify` | `restify` |
+    | `router` | `router` |
+  </Accordion>
+
+  <Accordion title="HTTP & networking">
+    | Plugin name | npm package |
+    |---|---|
+    | `dns` | Node.js built-in `dns` |
+    | `fetch` | Node.js global `fetch` |
+    | `find-my-way` | `find-my-way` |
+    | `http` | Node.js built-in `http` / `https` |
+    | `http2` | Node.js built-in `http2` |
+    | `net` | Node.js built-in `net` |
+    | `undici` | `undici` |
+    | `ws` | `ws` |
+  </Accordion>
+
+  <Accordion title="Databases — SQL">
+    | Plugin name | npm package |
+    |---|---|
+    | `knex` | `knex` |
+    | `mariadb` | `mariadb` |
+    | `mysql` | `mysql` |
+    | `mysql2` | `mysql2` |
+    | `oracledb` | `oracledb` |
+    | `pg` | `pg` |
+    | `prisma` | `@prisma/client` |
+    | `sequelize` | `sequelize` |
+    | `tedious` | `tedious` |
+  </Accordion>
+
+  <Accordion title="Databases — NoSQL & caching">
+    | Plugin name | npm package |
+    |---|---|
+    | `aerospike` | `aerospike` |
+    | `cassandra-driver` | `cassandra-driver` |
+    | `couchbase` | `couchbase` |
+    | `elasticsearch` | `@elastic/elasticsearch` |
+    | `ioredis` | `ioredis` |
+    | `iovalkey` | `iovalkey` |
+    | `memcached` | `memcached` |
+    | `mongodb-core` | `mongodb` |
+    | `mongoose` | `mongoose` |
+    | `opensearch` | `@opensearch-project/opensearch` |
+    | `redis` | `redis` |
+    | `sharedb` | `sharedb` |
+  </Accordion>
+
+  <Accordion title="Message queues & streaming">
+    | Plugin name | npm package |
+    |---|---|
+    | `amqp10` | `amqp10` |
+    | `amqplib` | `amqplib` |
+    | `aws-sdk` | `aws-sdk` / `@aws-sdk/client-sqs` |
+    | `azure-event-hubs` | `@azure/event-hubs` |
+    | `azure-service-bus` | `@azure/service-bus` |
+    | `azure-durable-functions` | Azure Durable Functions |
+    | `bullmq` | `bullmq` |
+    | `confluentinc-kafka-javascript` | `@confluentinc/kafka-javascript` |
+    | `google-cloud-pubsub` | `@google-cloud/pubsub` |
+    | `kafkajs` | `kafkajs` |
+    | `rhea` | `rhea` |
+  </Accordion>
+
+  <Accordion title="AI & ML">
+    | Plugin name | npm package |
+    |---|---|
+    | `ai` | Vercel AI SDK |
+    | `anthropic` | `@anthropic-ai/sdk` |
+    | `aws-sdk` | `@aws-sdk/client-bedrock-runtime` |
+    | `google-cloud-vertexai` | `@google-cloud/vertexai` |
+    | `google-genai` | `@google/genai` |
+    | `langchain` | `@langchain/core` |
+    | `langgraph` | `@langchain/langgraph` |
+    | `openai` | `openai` |
+  </Accordion>
+
+  <Accordion title="GraphQL & RPC">
+    | Plugin name | npm package |
+    |---|---|
+    | `apollo` | `@apollo/gateway` |
+    | `graphql` | `graphql` |
+    | `grpc` | `@grpc/grpc-js` |
+  </Accordion>
+
+  <Accordion title="Serverless & cloud">
+    | Plugin name | npm package |
+    |---|---|
+    | `aws-sdk` | `aws-sdk` / `@aws-sdk/*` |
+    | `azure-functions` | `@azure/functions` |
+  </Accordion>
+
+  <Accordion title="Logging">
+    | Plugin name | npm package |
+    |---|---|
+    | `bunyan` | `bunyan` |
+    | `pino` | `pino` |
+    | `winston` | `winston` |
+  </Accordion>
+
+  <Accordion title="Testing">
+    | Plugin name | npm package |
+    |---|---|
+    | `cucumber` | `@cucumber/cucumber` |
+    | `cypress` | `cypress` |
+    | `jest` | `jest` |
+    | `mocha` | `mocha` |
+    | `nyc` | `nyc` |
+    | `playwright` | `playwright` |
+    | `selenium` | `selenium-webdriver` |
+    | `vitest` | `vitest` |
+  </Accordion>
+
+  <Accordion title="Other">
+    | Plugin name | npm package |
+    |---|---|
+    | `avsc` | `avsc` |
+    | `child_process` | Node.js built-in `child_process` |
+    | `fs` | Node.js built-in `fs` |
+    | `generic-pool` | `generic-pool` |
+    | `protobufjs` | `protobufjs` |
+  </Accordion>
+</AccordionGroup>

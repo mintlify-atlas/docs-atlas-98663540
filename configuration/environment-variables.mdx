@@ -1,0 +1,203 @@
+---
+title: 'Environment variables'
+description: 'Complete reference for all dd-trace environment variables grouped by feature area.'
+---
+
+All environment variables recognized by `dd-trace`. Programmatic options set in `tracer.init()` override the corresponding environment variable unless noted otherwise.
+
+<Note>
+  `DD_LLMOBS_ENABLED` is the exception: the environment variable takes precedence over the programmatic `llmobs.enabled` option.
+</Note>
+
+## Core
+
+| Variable | Default | Description |
+|---|---|---|
+| `DD_SERVICE` | *(inferred from package.json)* | Service name. Also accepts alias `DD_SERVICE_NAME`. |
+| `DD_ENV` | — | Deployment environment (e.g. `prod`, `staging`). |
+| `DD_VERSION` | *(inferred from package.json)* | Application version. |
+| `DD_AGENT_HOST` | `127.0.0.1` | Hostname of the Datadog Agent. Also accepts alias `DD_TRACE_AGENT_HOSTNAME`. |
+| `DD_TRACE_AGENT_PORT` | `8126` | Port of the Datadog Agent. |
+| `DD_TRACE_AGENT_URL` | — | Full URL of the Datadog Agent (overrides `DD_AGENT_HOST` + `DD_TRACE_AGENT_PORT`). Also accepts alias `DD_TRACE_URL`. |
+| `DD_SITE` | `datadoghq.com` | Datadog intake site for agentless features. |
+| `DD_API_KEY` | — | Datadog API key (required for agentless features). Also accepts alias `DATADOG_API_KEY`. |
+| `DD_TAGS` | — | Comma-separated global tags applied to every span, e.g. `team:backend,region:us-east`. |
+| `DD_SERVICE_MAPPING` | — | Comma-separated per-plugin service name overrides, e.g. `pg:postgres-primary,redis:cache`. |
+| `DD_APM_TRACING_ENABLED` | `true` | Set to `false` to disable APM tracing while keeping standalone products active. |
+| `DD_TRACE_ENABLED` | `true` | Master switch for the tracer. |
+| `DD_TRACE_DEBUG` | `false` | Enable debug logging. |
+| `DD_TRACE_LOG_LEVEL` | `debug` | Minimum log level when debug is on. One of `debug`, `info`, `warn`, `error`. Also configurable via `OTEL_LOG_LEVEL`. |
+| `DD_TRACE_STARTUP_LOGS` | `false` | Print startup diagnostics to the console. |
+| `DD_TRACE_REPORT_HOSTNAME` | `false` | Include the service host's hostname as a span tag. |
+| `DD_TRACE_AGENT_PROTOCOL_VERSION` | `0.4` | Agent protocol version. |
+| `DD_LOGS_INJECTION` | `true` | Inject trace and span IDs into log records. |
+| `DD_LOG_LEVEL` | — | Override the tracer internal log level. |
+
+## Tracing and sampling
+
+| Variable | Default | Description |
+|---|---|---|
+| `DD_TRACE_SAMPLE_RATE` | — | Global ingestion sample rate (0–1). Also configurable via `OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG`. |
+| `DD_TRACE_RATE_LIMIT` | *(agent decision)* | Global trace rate limit (traces per second). |
+| `DD_TRACE_SAMPLING_RULES` | `[]` | JSON array of sampling rules: `[{"service":"my-api","sampleRate":1.0}]`. |
+| `DD_SPAN_SAMPLING_RULES` | — | JSON array of span-level sampling rules for keeping individual spans from dropped traces. |
+| `DD_SPAN_SAMPLING_RULES_FILE` | — | Path to a JSON file containing span sampling rules. |
+| `DD_TRACE_FLUSH_INTERVAL` | `2000` | Trace flush interval in milliseconds. |
+| `DD_TRACE_PARTIAL_FLUSH_MIN_SPANS` | `1000` | Number of spans that triggers a partial export. |
+| `DD_TRACE_128_BIT_TRACEID_GENERATION_ENABLED` | `true` | Generate 128-bit trace IDs. |
+| `DD_TRACE_128_BIT_TRACEID_LOGGING_ENABLED` | `true` | Log trace IDs as 128-bit values. |
+
+## Propagation
+
+| Variable | Default | Description |
+|---|---|---|
+| `DD_TRACE_PROPAGATION_STYLE` | — | Comma-separated list of propagation formats for both inject and extract (e.g. `datadog,tracecontext`). |
+| `DD_TRACE_PROPAGATION_STYLE_INJECT` | — | Propagation formats used for injection only. |
+| `DD_TRACE_PROPAGATION_STYLE_EXTRACT` | — | Propagation formats used for extraction only (highest priority listed first). |
+| `OTEL_PROPAGATORS` | — | OpenTelemetry propagator names. Used when DD-specific propagation vars are not set. |
+| `DD_TRACE_BAGGAGE_MAX_BYTES` | `8192` | Maximum size in bytes for baggage propagation. |
+| `DD_TRACE_BAGGAGE_MAX_ITEMS` | `64` | Maximum number of baggage items. |
+| `DD_TRACE_BAGGAGE_TAG_KEYS` | `user.id, session.id, account.id` | Comma-separated baggage keys automatically promoted to span tags. |
+
+## Runtime metrics
+
+| Variable | Default | Description |
+|---|---|---|
+| `DD_RUNTIME_METRICS_ENABLED` | `false` | Enable runtime metrics collection. |
+| `DD_RUNTIME_METRICS_GC_ENABLED` | `true` | Include garbage collection metrics. |
+| `DD_RUNTIME_METRICS_EVENT_LOOP_ENABLED` | `true` | Include event loop metrics. |
+| `DD_RUNTIME_METRICS_RUNTIME_ID_ENABLED` | `false` | Add `runtime-id` tag to metrics. |
+| `DD_RUNTIME_METRICS_FLUSH_INTERVAL` | `10000` | Metrics flush interval in milliseconds. |
+| `DD_DOGSTATSD_HOST` | `localhost` | Hostname of the DogStatsD agent. Also accepts alias `DD_DOGSTATSD_HOSTNAME`. |
+| `DD_DOGSTATSD_PORT` | `8125` | Port of the DogStatsD agent. |
+
+## AppSec
+
+| Variable | Default | Description |
+|---|---|---|
+| `DD_APPSEC_ENABLED` | — | Enable Application Security Management. |
+| `DD_APPSEC_RULES` | — | Path to a custom WAF rules file. |
+| `DD_APPSEC_TRACE_RATE_LIMIT` | `100` | Maximum attack-related traces sampled per second. |
+| `DD_APPSEC_WAF_TIMEOUT` | `5000` | Maximum WAF execution time in microseconds per request. |
+| `DD_APPSEC_OBFUSCATION_PARAMETER_KEY_REGEXP` | *(built-in pattern)* | Regex to redact sensitive parameter keys in attack reports. |
+| `DD_APPSEC_OBFUSCATION_PARAMETER_VALUE_REGEXP` | *(built-in pattern)* | Regex to redact sensitive parameter values in attack reports. |
+| `DD_APPSEC_HTTP_BLOCKED_TEMPLATE_HTML` | — | Path to custom HTML block page template. |
+| `DD_APPSEC_HTTP_BLOCKED_TEMPLATE_JSON` | — | Path to custom JSON block response template. |
+| `DD_APPSEC_GRAPHQL_BLOCKED_TEMPLATE_JSON` | — | Path to custom JSON block response template for GraphQL. |
+| `DD_APPSEC_AUTO_USER_INSTRUMENTATION_MODE` | `identification` | User tracking mode: `identification`, `anonymous`, or `disabled`. Also accepts alias `DD_APPSEC_AUTOMATED_USER_EVENTS_TRACKING`. |
+| `DD_APPSEC_RASP_ENABLED` | `true` | Enable Runtime Application Self-Protection. |
+| `DD_APPSEC_STACK_TRACE_ENABLED` | `true` | Include stack traces in attack reports. |
+| `DD_APPSEC_MAX_STACK_TRACES` | `2` | Maximum number of stack traces per attack report. |
+| `DD_APPSEC_MAX_STACK_TRACE_DEPTH` | `32` | Maximum depth of each stack trace. |
+| `DD_API_SECURITY_ENABLED` | `true` | Enable API Security schema collection. |
+| `DD_API_SECURITY_ENDPOINT_COLLECTION_ENABLED` | `true` | Enable endpoint collection for API Security. |
+| `DD_API_SECURITY_ENDPOINT_COLLECTION_MESSAGE_LIMIT` | `300` | Maximum endpoints serialized per message. |
+
+## IAST
+
+| Variable | Default | Description |
+|---|---|---|
+| `DD_IAST_ENABLED` | `false` | Enable IAST vulnerability detection. |
+| `DD_IAST_REQUEST_SAMPLING` | `30` | Percentage of requests analyzed for vulnerabilities (0–100). |
+| `DD_IAST_MAX_CONCURRENT_REQUESTS` | `2` | Maximum concurrent requests being analyzed. |
+| `DD_IAST_MAX_CONTEXT_OPERATIONS` | `2` | Maximum vulnerability detections per request. |
+| `DD_IAST_DEDUPLICATION_ENABLED` | `true` | Deduplicate identical vulnerability findings. |
+| `DD_IAST_REDACTION_ENABLED` | `true` | Redact sensitive data in vulnerability reports. |
+| `DD_IAST_REDACTION_NAME_PATTERN` | *(built-in pattern)* | Regex to redact sensitive source names. |
+| `DD_IAST_REDACTION_VALUE_PATTERN` | *(built-in pattern)* | Regex to redact sensitive source values. |
+| `DD_IAST_DB_ROWS_TO_TAINT` | `1` | Number of rows tainted from database query results. |
+| `DD_IAST_TELEMETRY_VERBOSITY` | `INFORMATION` | IAST telemetry verbosity. One of `OFF`, `MANDATORY`, `INFORMATION`, `DEBUG`. |
+| `DD_IAST_SECURITY_CONTROLS_CONFIGURATION` | — | Security controls configuration string. |
+
+## Profiling
+
+| Variable | Default | Description |
+|---|---|---|
+| `DD_PROFILING_ENABLED` | `false` | Enable continuous profiling. |
+| `DD_PROFILING_CPU_ENABLED` | `true` | Enable CPU profiling. |
+| `DD_PROFILING_HEAP_ENABLED` | `false` | Enable heap profiling. |
+| `DD_PROFILING_TIMELINE_ENABLED` | `true` | Enable timeline view in profiles. |
+| `DD_PROFILING_CODEHOTSPOTS_ENABLED` | `true` | Enable code hotspots linking profiles to traces. |
+| `DD_PROFILING_ENDPOINT_COLLECTION_ENABLED` | `true` | Collect endpoint data in profiles. |
+| `DD_PROFILING_SOURCE_MAP` | `true` | Enable source map support in profiles. |
+| `DD_PROFILING_UPLOAD_PERIOD` | `65` | Profiling data upload interval in seconds. |
+| `DD_PROFILING_UPLOAD_TIMEOUT` | `60000` | Upload timeout in milliseconds. |
+| `DD_PROFILING_EXPORTERS` | `agent` | Profiling data export target. |
+
+## LLM Observability
+
+| Variable | Default | Description |
+|---|---|---|
+| `DD_LLMOBS_ENABLED` | `false` | Enable LLM Observability. **This variable takes precedence over the programmatic option.** |
+| `DD_LLMOBS_ML_APP` | — | Name of the ML application shown in the Datadog UI. |
+| `DD_LLMOBS_AGENTLESS_ENABLED` | — | Send LLM Observability data without a local Agent. |
+
+## Data Streams Monitoring
+
+| Variable | Default | Description |
+|---|---|---|
+| `DD_DATA_STREAMS_ENABLED` | `false` | Enable Data Streams Monitoring. |
+
+## Database Monitoring
+
+| Variable | Default | Description |
+|---|---|---|
+| `DD_DBM_PROPAGATION_MODE` | `disabled` | DBM to APM link mode. One of `disabled`, `service`, `full`. |
+| `DD_DBM_INJECT_SQL_BASEHASH` | `false` | Inject SQL base hash into DBM SQL comments. Requires `DD_EXPERIMENTAL_PROPAGATE_PROCESS_TAGS_ENABLED=true`. |
+
+## Dynamic Instrumentation
+
+| Variable | Default | Description |
+|---|---|---|
+| `DD_DYNAMIC_INSTRUMENTATION_ENABLED` | `false` | Enable Dynamic Instrumentation. |
+| `DD_DYNAMIC_INSTRUMENTATION_PROBE_FILE` | — | Path to a local probe configuration file. |
+| `DD_DYNAMIC_INSTRUMENTATION_CAPTURE_TIMEOUT_MS` | `15` | Timeout in milliseconds for capturing variable values. |
+| `DD_DYNAMIC_INSTRUMENTATION_UPLOAD_INTERVAL_SECONDS` | `1` | Upload interval in seconds. |
+| `DD_DYNAMIC_INSTRUMENTATION_REDACTED_IDENTIFIERS` | `[]` | Comma-separated identifier names to redact in captured data. |
+| `DD_DYNAMIC_INSTRUMENTATION_REDACTION_EXCLUDED_IDENTIFIERS` | `[]` | Comma-separated identifiers to exclude from built-in redaction. |
+
+## Remote Configuration
+
+| Variable | Default | Description |
+|---|---|---|
+| `DD_REMOTE_CONFIGURATION_ENABLED` | `true` | Enable Remote Configuration. Also accepts alias `DD_REMOTE_CONFIG_ENABLED`. |
+| `DD_REMOTE_CONFIG_POLL_INTERVAL_SECONDS` | `5.0` | Polling interval in seconds for Remote Configuration updates. |
+
+## Plugins
+
+| Variable | Default | Description |
+|---|---|---|
+| `DD_TRACE_DISABLED_PLUGINS` | — | Comma-separated list of plugin names to disable at startup. |
+| `DD_TRACE_DISABLED_INSTRUMENTATIONS` | — | Comma-separated list of instrumentation names to disable. |
+| `DD_TRACE_<PLUGIN>_ENABLED` | `true` | Enable or disable a specific plugin. Replace `<PLUGIN>` with the uppercase plugin name, e.g. `DD_TRACE_EXPRESS_ENABLED=false`. |
+
+## Client IP
+
+| Variable | Default | Description |
+|---|---|---|
+| `DD_TRACE_CLIENT_IP_ENABLED` | `false` | Collect client IP from request headers. |
+| `DD_TRACE_CLIENT_IP_HEADER` | — | Custom header name to source the client IP from. |
+
+## Cloud payload tagging
+
+| Variable | Default | Description |
+|---|---|---|
+| `DD_TRACE_CLOUD_REQUEST_PAYLOAD_TAGGING` | — | JSONPath expression selecting request payload fields to tag on spans. |
+| `DD_TRACE_CLOUD_RESPONSE_PAYLOAD_TAGGING` | — | JSONPath expression selecting response payload fields to tag on spans. |
+| `DD_TRACE_CLOUD_PAYLOAD_TAGGING_MAX_DEPTH` | `10` | Maximum traversal depth for payload tagging. |
+
+## Code origin for spans
+
+| Variable | Default | Description |
+|---|---|---|
+| `DD_CODE_ORIGIN_FOR_SPANS_ENABLED` | `true` | Attach source code location to spans. |
+
+## Telemetry
+
+| Variable | Default | Description |
+|---|---|---|
+| `DD_INSTRUMENTATION_TELEMETRY_ENABLED` | `true` | Enable library telemetry. Also accepts alias `DD_TRACE_TELEMETRY_ENABLED`. |
+| `DD_TELEMETRY_HEARTBEAT_INTERVAL` | `60.0` | Telemetry heartbeat interval in seconds. |
+| `DD_TELEMETRY_DEPENDENCY_COLLECTION_ENABLED` | `true` | Collect dependency information in telemetry. |
+| `DD_TELEMETRY_LOG_COLLECTION_ENABLED` | `true` | Collect logs in telemetry. |
+| `DD_TELEMETRY_METRICS_ENABLED` | `true` | Collect metrics in telemetry. |

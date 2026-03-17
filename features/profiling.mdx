@@ -1,0 +1,117 @@
+---
+title: "Continuous Profiler"
+description: "Capture CPU, heap, and wall-time profiles continuously in production to identify performance bottlenecks in your Node.js services."
+keywords: ["profiling", "continuous profiler", "CPU", "heap", "wall time", "dd-trace", "performance"]
+---
+
+The Datadog Continuous Profiler captures low-overhead profiles of your Node.js services while they run in production. Profiles flow into Datadog's profiler UI where you can identify hot functions, memory leaks, and event-loop bottlenecks without adding instrumentation code.
+
+## What the profiler captures
+
+The profiler collects several complementary data types:
+
+| Profile type | What it shows |
+| --- | --- |
+| **Wall time** | Where the process spends elapsed time, including I/O waits. Useful for identifying slow code paths even when CPU usage is low. |
+| **CPU time** | Where the process spends CPU cycles. Useful for identifying compute-heavy functions. |
+| **Heap allocations** | Which functions allocate the most memory over time. Useful for finding allocation hot spots. |
+| **Heap live objects** | Which objects are alive in the V8 heap at sample time. Useful for diagnosing memory leaks. |
+| **Timeline** | Async activity overlaid on wall-time samples. Requires Linux and sampling context support. |
+
+By default, the profiler enables both wall-time and heap profiling.
+
+## Enable the profiler
+
+<Steps>
+  <Step title="Enable via environment variable or init option">
+    Set `DD_PROFILING_ENABLED=true` when starting your service:
+
+    ```bash
+    DD_PROFILING_ENABLED=true node server.js
+    ```
+
+    Or pass `profiling: true` to `tracer.init()`:
+
+    ```javascript
+    const tracer = require('dd-trace').init({
+      service: 'my-node-app',
+      env: 'production',
+      profiling: true,
+    })
+    ```
+  </Step>
+
+  <Step title="Confirm the Datadog Agent is reachable">
+    The profiler uploads profiles through the Datadog Agent. Verify the Agent is running and that your service can reach it on `localhost:8126` (or the URL you configured via `DD_AGENT_HOST` / `DD_TRACE_AGENT_URL`).
+  </Step>
+
+  <Step title="View profiles in Datadog">
+    After your service processes some traffic, open [Datadog APM → Profiles](https://app.datadoghq.com/profiling) to see flamegraphs, top functions, and timeline views.
+  </Step>
+</Steps>
+
+<Note>
+  Profiles are uploaded once per minute. Allow at least 1–2 minutes after startup before profiles appear in Datadog.
+</Note>
+
+## Configuration options
+
+<ParamField path="profiling" type="boolean">
+  Shorthand to enable profiling with all defaults. Equivalent to setting `DD_PROFILING_ENABLED=true`. Environment variable: `DD_PROFILING_ENABLED`.
+</ParamField>
+
+<ParamField path="DD_PROFILING_WALLTIME_ENABLED" type="boolean" default="true">
+  Enable or disable wall-time (and CPU-time) profiling. Set to `false` to disable the wall profiler entirely.
+</ParamField>
+
+<ParamField path="DD_PROFILING_HEAP_ENABLED" type="boolean" default="true">
+  Enable or disable heap profiling (allocations and live objects). Set to `false` to disable the space profiler.
+</ParamField>
+
+<ParamField path="DD_PROFILING_CODEHOTSPOTS_ENABLED" type="boolean" default="true">
+  Enable code hotspots, which link individual spans in APM traces to the profiler flamegraph. Requires Linux (sampling contexts are not available on Windows).
+</ParamField>
+
+<ParamField path="DD_PROFILING_ENDPOINT_COLLECTION_ENABLED" type="boolean" default="true">
+  Enable endpoint collection, which groups profiler data by HTTP endpoint. Requires Linux.
+</ParamField>
+
+<ParamField path="DD_PROFILING_TIMELINE_ENABLED" type="boolean" default="true">
+  Enable the timeline view showing async activity over time. Requires Linux.
+</ParamField>
+
+<ParamField path="DD_PROFILING_UPLOAD_PERIOD" type="number" default="65">
+  Upload interval in seconds. Must be greater than 60 (the minimum profile duration is one minute).
+</ParamField>
+
+<ParamField path="DD_PROFILING_HEAP_SAMPLING_INTERVAL" type="number" default="524288">
+  Heap sampling interval in bytes (default 512 KiB). Lower values produce more detailed allocation data at higher overhead.
+</ParamField>
+
+## Performance impact
+
+The continuous profiler is designed to run in production with minimal impact:
+
+- **Wall/CPU profiler**: samples at approximately 99 Hz using V8's sampling profiler. Typical overhead is less than 1% CPU.
+- **Heap profiler**: samples allocations proportionally to size. At the default 512 KiB interval, overhead is negligible for most workloads.
+- **Upload**: profiles are serialized and uploaded in the background once per minute. Upload does not block the event loop.
+
+<Warning>
+  Lowering `DD_PROFILING_HEAP_SAMPLING_INTERVAL` significantly (below 64 KiB) can increase CPU overhead for allocation-heavy workloads. Test in a staging environment before deploying to production.
+</Warning>
+
+## Code hotspots
+
+When both APM tracing and the profiler are enabled, Datadog correlates span timing with profiler samples. In the trace view you can click a span and jump directly to the profiler flamegraph scoped to that span's execution time. This correlation requires Linux and is enabled by default.
+
+## OOM heap snapshots
+
+The profiler can capture a heap snapshot when a process is about to run out of memory. This is useful for debugging out-of-memory crashes:
+
+```bash
+DD_PROFILING_ENABLED=true \
+DD_PROFILING_EXPERIMENTAL_OOM_MONITORING_ENABLED=true \
+node server.js
+```
+
+When an OOM is detected, the profiler uploads a space profile tagged with `snapshot:on_out_of_memory` before the process exits.

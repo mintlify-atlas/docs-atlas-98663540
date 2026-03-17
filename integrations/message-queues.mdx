@@ -1,0 +1,404 @@
+---
+title: "Message queues & streaming"
+description: "Automatic tracing for Kafka, RabbitMQ, AWS SQS/SNS, Google Cloud Pub/Sub, BullMQ, Azure Event Hubs, and more."
+keywords: ["kafka", "rabbitmq", "sqs", "sns", "pubsub", "bullmq", "azure event hubs", "message queue tracing", "data streams monitoring"]
+---
+
+# Message queues & streaming
+
+dd-trace automatically creates producer and consumer spans for messaging systems, and propagates distributed trace context across message boundaries so that you can trace a request across services connected by queues.
+
+When [Data Streams Monitoring](https://docs.datadoghq.com/data_streams/) (DSM) is enabled, the tracer also tracks end-to-end latency and pipeline health across topics and queues.
+
+## How context propagation works
+
+When a producer sends a message, the tracer injects the current trace context into the message headers. When a consumer receives the message, the tracer extracts that context and creates a child span, linking the consumer's trace back to the producer's original trace. This gives you a complete view of the request across all services.
+
+```
+Producer service          Message broker          Consumer service
+[producer span]  ----->  [message headers]  --->  [consumer span (child)]
+     trace_id                 injected                  extracted
+```
+
+## Enable Data Streams Monitoring
+
+Set `dsmEnabled: true` on the tracer or use the environment variable:
+
+```javascript
+const tracer = require('dd-trace').init({
+  dsmEnabled: true
+})
+```
+
+```bash
+DD_DATA_STREAMS_ENABLED=true node app.js
+```
+
+---
+
+## KafkaJS
+
+[KafkaJS](https://kafka.js.org/) is the most widely used Kafka client for Node.js. The `kafkajs` plugin traces producer sends and consumer message processing.
+
+**npm package:** `kafkajs`
+
+### Enable
+
+```javascript
+const tracer = require('dd-trace').init()
+
+const { Kafka } = require('kafkajs')
+```
+
+### Producer example
+
+```javascript
+const kafka = new Kafka({ brokers: ['localhost:9092'] })
+const producer = kafka.producer()
+
+await producer.connect()
+
+// Trace context is automatically injected into message headers
+await producer.send({
+  topic: 'orders',
+  messages: [
+    { key: 'order-123', value: JSON.stringify({ orderId: 123, total: 99.99 }) }
+  ]
+})
+```
+
+### Consumer example
+
+```javascript
+const consumer = kafka.consumer({ groupId: 'order-processor' })
+
+await consumer.connect()
+await consumer.subscribe({ topic: 'orders', fromBeginning: false })
+
+await consumer.run({
+  eachMessage: async ({ topic, partition, message }) => {
+    // Span is automatically created as a child of the producer span
+    const order = JSON.parse(message.value.toString())
+    await processOrder(order)
+  }
+})
+```
+
+### Span tags
+
+| Tag | Value |
+|---|---|
+| `component` | `kafkajs` |
+| `kafka.topic` | Topic name |
+| `kafka.partition` | Partition number (consumer) |
+| `kafka.batch_size` | Number of messages (producer) |
+| `kafka.message.offset` | Message offset (consumer) |
+| `messaging.destination.name` | Topic name |
+| `span.type` | `worker` (consumer) |
+
+---
+
+## amqplib (RabbitMQ)
+
+The `amqplib` plugin instruments the [amqplib](https://github.com/squaremo/amqp.node) AMQP 0-9-1 client used with RabbitMQ.
+
+**npm package:** `amqplib`
+
+### Enable
+
+```javascript
+const tracer = require('dd-trace').init()
+
+const amqp = require('amqplib')
+```
+
+### Producer example
+
+```javascript
+const conn = await amqp.connect('amqp://localhost')
+const channel = await conn.createChannel()
+
+await channel.assertQueue('tasks')
+
+// Trace context injected into message properties
+channel.sendToQueue('tasks', Buffer.from(JSON.stringify({ taskId: 1 })))
+```
+
+### Consumer example
+
+```javascript
+const conn = await amqp.connect('amqp://localhost')
+const channel = await conn.createChannel()
+
+await channel.assertQueue('tasks')
+
+channel.consume('tasks', (msg) => {
+  // Consumer span linked to producer trace
+  const task = JSON.parse(msg.content.toString())
+  processTask(task)
+  channel.ack(msg)
+})
+```
+
+---
+
+## amqp10
+
+The `amqp10` plugin instruments the [node-amqp10](https://github.com/noodlefrenzy/node-amqp10) AMQP 1.0 client, compatible with Azure Service Bus and other AMQP 1.0 brokers.
+
+**npm package:** `amqp10`
+
+```javascript
+const tracer = require('dd-trace').init()
+
+const amqp = require('amqp10')
+```
+
+---
+
+## AWS SQS and SNS (aws-sdk)
+
+The `aws-sdk` plugin instruments the AWS SDK for both v2 (`aws-sdk`) and v3 (`@aws-sdk/*`). It traces SQS send/receive/delete operations and SNS publish calls.
+
+**npm packages:** `aws-sdk`, `@aws-sdk/client-sqs`, `@aws-sdk/client-sns`
+
+### Enable
+
+```javascript
+const tracer = require('dd-trace').init()
+
+const { SQSClient, SendMessageCommand, ReceiveMessageCommand } = require('@aws-sdk/client-sqs')
+```
+
+### Configuration
+
+```javascript
+tracer.use('aws-sdk', {
+  // Instrument only SQS
+  sqs: {
+    enabled: true,
+    producer: true,
+    consumer: true
+  },
+  // Instrument only SNS
+  sns: { enabled: true },
+  // Inject trace context into all messages in batch operations
+  batchPropagationEnabled: false
+})
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `batchPropagationEnabled` | `boolean` | `false` | Inject trace context into all messages in batch SQS, Kinesis, and SNS operations. By default only the first message receives context injection. |
+| `hooks.request` | `(span, response) => void` | — | Hook called just before the AWS span finishes. |
+| `[service]` | `boolean \| object` | `true` | Enable/disable individual services. Message queue services accept `{ producer, consumer }` sub-options. |
+
+### Producer example (SQS)
+
+```javascript
+const client = new SQSClient({ region: 'us-east-1' })
+
+// Trace context injected as a MessageAttribute
+await client.send(new SendMessageCommand({
+  QueueUrl: 'https://sqs.us-east-1.amazonaws.com/123456789/my-queue',
+  MessageBody: JSON.stringify({ eventType: 'order.placed', orderId: 456 })
+}))
+```
+
+### Consumer example (SQS)
+
+```javascript
+const messages = await client.send(new ReceiveMessageCommand({
+  QueueUrl: 'https://sqs.us-east-1.amazonaws.com/123456789/my-queue',
+  MessageAttributeNames: ['All']
+}))
+
+for (const message of messages.Messages ?? []) {
+  // Consumer span is a child of the producer span
+  await handleMessage(message)
+}
+```
+
+---
+
+## Google Cloud Pub/Sub
+
+The `google-cloud-pubsub` plugin instruments the [@google-cloud/pubsub](https://github.com/googleapis/nodejs-pubsub) client.
+
+**npm package:** `@google-cloud/pubsub`
+
+### Enable
+
+```javascript
+const tracer = require('dd-trace').init()
+
+const { PubSub } = require('@google-cloud/pubsub')
+```
+
+### Publisher example
+
+```javascript
+const pubsub = new PubSub({ projectId: 'my-project' })
+const topic = pubsub.topic('my-topic')
+
+// Trace context injected into message attributes
+await topic.publishMessage({
+  data: Buffer.from(JSON.stringify({ event: 'user.created', userId: 789 }))
+})
+```
+
+### Subscriber example
+
+```javascript
+const subscription = pubsub.subscription('my-subscription')
+
+subscription.on('message', message => {
+  // Consumer span linked to publisher trace
+  const data = JSON.parse(message.data.toString())
+  processEvent(data)
+  message.ack()
+})
+```
+
+---
+
+## BullMQ
+
+The `bullmq` plugin instruments [BullMQ](https://docs.bullmq.io/), a Redis-based job queue library.
+
+**npm package:** `bullmq`
+
+### Enable
+
+```javascript
+const tracer = require('dd-trace').init()
+
+const { Queue, Worker } = require('bullmq')
+```
+
+### Producer example
+
+```javascript
+const queue = new Queue('email', { connection: { host: 'localhost', port: 6379 } })
+
+// Job addition is automatically traced
+await queue.add('send-welcome', { userId: 42, template: 'welcome' })
+```
+
+### Worker example
+
+```javascript
+const worker = new Worker(
+  'email',
+  async job => {
+    // Worker span linked to producer trace
+    await sendEmail(job.data)
+  },
+  { connection: { host: 'localhost', port: 6379 } }
+)
+```
+
+---
+
+## rhea (AMQP)
+
+The `rhea` plugin instruments the [rhea](https://github.com/amqp/rhea) AMQP 1.0 messaging library.
+
+**npm package:** `rhea`
+
+```javascript
+const tracer = require('dd-trace').init()
+
+const rhea = require('rhea')
+```
+
+---
+
+## Azure Event Hubs
+
+The `azure-event-hubs` plugin instruments the [@azure/event-hubs](https://www.npmjs.com/package/@azure/event-hubs) client.
+
+**npm package:** `@azure/event-hubs`
+
+```javascript
+const tracer = require('dd-trace').init()
+
+const { EventHubProducerClient, EventHubConsumerClient } = require('@azure/event-hubs')
+```
+
+### Producer example
+
+```javascript
+const producer = new EventHubProducerClient('<connection-string>', 'my-event-hub')
+
+// Trace context injected into event properties
+const batch = await producer.createBatch()
+batch.tryAdd({ body: { eventType: 'pageview', userId: 123 } })
+await producer.sendBatch(batch)
+await producer.close()
+```
+
+### Consumer example
+
+```javascript
+const consumer = new EventHubConsumerClient(
+  EventHubConsumerClient.defaultConsumerGroupName,
+  '<connection-string>',
+  'my-event-hub'
+)
+
+consumer.subscribe({
+  processEvents: async (events) => {
+    for (const event of events) {
+      // Consumer span linked to producer trace
+      await handleEvent(event.body)
+    }
+  },
+  processError: async (err) => { console.error(err) }
+})
+```
+
+---
+
+## Azure Service Bus
+
+The `azure-service-bus` plugin instruments the [@azure/service-bus](https://www.npmjs.com/package/@azure/service-bus) client.
+
+**npm package:** `@azure/service-bus`
+
+```javascript
+const tracer = require('dd-trace').init()
+
+const { ServiceBusClient } = require('@azure/service-bus')
+```
+
+### Example
+
+```javascript
+const sbClient = new ServiceBusClient('<connection-string>')
+const sender = sbClient.createSender('my-queue')
+
+// Automatically traced
+await sender.sendMessages({
+  body: { orderId: 789 },
+  contentType: 'application/json'
+})
+
+await sender.close()
+```
+
+---
+
+## Confluent Kafka JavaScript
+
+The `confluentinc-kafka-javascript` plugin instruments the [@confluentinc/kafka-javascript](https://github.com/confluentinc/confluent-kafka-js) client.
+
+**npm package:** `@confluentinc/kafka-javascript`
+
+```javascript
+const tracer = require('dd-trace').init()
+
+const { KafkaJS } = require('@confluentinc/kafka-javascript')
+```
+
+The plugin traces producer sends and consumer message processing, following the same pattern as the `kafkajs` plugin.

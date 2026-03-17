@@ -1,0 +1,213 @@
+---
+title: "Data Streams API"
+description: "The tracer.dataStreamsCheckpointer object provides manual checkpoint methods for Data Streams Monitoring."
+---
+
+The `tracer.dataStreamsCheckpointer` object lets you manually instrument producer and consumer operations for [Data Streams Monitoring](https://docs.datadoghq.com/data_streams/). Enable it before use:
+
+```javascript
+const tracer = require('dd-trace').init({
+  dsmEnabled: true,
+})
+```
+
+Or set the environment variable:
+
+```bash
+DD_DATA_STREAMS_ENABLED=true node app.js
+```
+
+<Note>
+  All methods are no-ops when Data Streams Monitoring is disabled.
+</Note>
+
+---
+
+## setProduceCheckpoint
+
+Sets a produce checkpoint and injects the DSM context into the provided carrier. Call this before sending a message so that the pathway can be propagated downstream.
+
+```typescript
+setProduceCheckpoint(type: string, target: string, carrier: any): void
+```
+
+<ParamField path="type" type="string" required>
+  The streaming technology (e.g. `'kafka'`, `'kinesis'`, `'sns'`, `'sqs'`).
+</ParamField>
+
+<ParamField path="target" type="string" required>
+  The target of the data — a topic, exchange, or stream name.
+</ParamField>
+
+<ParamField path="carrier" type="any" required>
+  The carrier object into which the DSM context is injected (typically the message headers object).
+</ParamField>
+
+```javascript
+const tracer = require('dd-trace').init({ dsmEnabled: true })
+const { Kafka } = require('kafkajs')
+
+const kafka = new Kafka({ brokers: ['localhost:9092'] })
+const producer = kafka.producer()
+
+async function sendOrder(order) {
+  const headers = {}
+
+  // Inject DSM context into headers before sending
+  tracer.dataStreamsCheckpointer.setProduceCheckpoint('kafka', 'orders', headers)
+
+  await producer.send({
+    topic: 'orders',
+    messages: [{ value: JSON.stringify(order), headers }],
+  })
+}
+```
+
+---
+
+## setConsumeCheckpoint
+
+Sets a consume checkpoint and extracts the DSM context from the provided carrier. Call this when a message is received to continue the pathway from the producer.
+
+```typescript
+setConsumeCheckpoint(
+  type: string,
+  source: string,
+  carrier: any,
+  manualCheckpoint?: boolean
+): any
+```
+
+<ParamField path="type" type="string" required>
+  The streaming technology (e.g. `'kafka'`, `'kinesis'`, `'sns'`).
+</ParamField>
+
+<ParamField path="source" type="string" required>
+  The source of the data — a topic, exchange, or stream name.
+</ParamField>
+
+<ParamField path="carrier" type="any" required>
+  The carrier object from which the DSM context is extracted (typically the message headers).
+</ParamField>
+
+<ParamField path="manualCheckpoint" type="boolean" default="true">
+  Whether this checkpoint was set manually. Keep this as `true` when instrumenting manually. Manual checkpoints take precedence over automatic instrumentation if the same call is instrumented by both.
+</ParamField>
+
+<ResponseField name="returns" type="any">
+  The DSM context associated with the current pathway.
+</ResponseField>
+
+```javascript
+const tracer = require('dd-trace').init({ dsmEnabled: true })
+
+const consumer = kafka.consumer({ groupId: 'order-processors' })
+
+await consumer.subscribe({ topic: 'orders' })
+
+await consumer.run({
+  eachMessage: async ({ topic, message }) => {
+    // Extract DSM context from message headers
+    tracer.dataStreamsCheckpointer.setConsumeCheckpoint('kafka', topic, message.headers)
+
+    const order = JSON.parse(message.value.toString())
+    await processOrder(order)
+  },
+})
+```
+
+---
+
+## trackTransaction
+
+Records a transaction ID at a named checkpoint without pathway propagation. Tags the active span (or the provided span) with `dsm.transaction.id` and `dsm.transaction.checkpoint`.
+
+```typescript
+trackTransaction(
+  transactionId: string,
+  checkpointName: string,
+  span?: Span | null
+): void
+```
+
+<ParamField path="transactionId" type="string" required>
+  The unique transaction identifier. Truncated to 255 UTF-8 bytes.
+</ParamField>
+
+<ParamField path="checkpointName" type="string" required>
+  The logical checkpoint name. This maps to a stable 1-byte ID for the lifetime of the process.
+</ParamField>
+
+<ParamField path="span" type="Span | null">
+  The span to tag. Defaults to the currently active span.
+</ParamField>
+
+```javascript
+const tracer = require('dd-trace').init({ dsmEnabled: true })
+
+const consumer = kafka.consumer({ groupId: 'payments' })
+
+await consumer.run({
+  eachMessage: async ({ message }) => {
+    const paymentId = message.headers['x-payment-id'].toString()
+
+    // Track this payment's ID at the 'payment-received' checkpoint
+    tracer.dataStreamsCheckpointer.trackTransaction(
+      paymentId,
+      'payment-received'
+    )
+
+    await processPayment(JSON.parse(message.value.toString()))
+  },
+})
+```
+
+---
+
+## End-to-end example
+
+The following example shows a complete Kafka producer/consumer pair with DSM context propagation:
+
+<CodeGroup>
+
+```javascript Producer
+const tracer = require('dd-trace').init({ dsmEnabled: true })
+const { Kafka } = require('kafkajs')
+
+const kafka = new Kafka({ brokers: ['localhost:9092'] })
+const producer = kafka.producer()
+
+async function publishEvent(topic, event) {
+  await producer.connect()
+
+  const headers = {}
+  tracer.dataStreamsCheckpointer.setProduceCheckpoint('kafka', topic, headers)
+
+  await producer.send({
+    topic,
+    messages: [{ value: JSON.stringify(event), headers }],
+  })
+}
+```
+
+```javascript Consumer
+const tracer = require('dd-trace').init({ dsmEnabled: true })
+const { Kafka } = require('kafkajs')
+
+const kafka = new Kafka({ brokers: ['localhost:9092'] })
+const consumer = kafka.consumer({ groupId: 'my-service' })
+
+await consumer.connect()
+await consumer.subscribe({ topic: 'events' })
+
+await consumer.run({
+  eachMessage: async ({ topic, message }) => {
+    tracer.dataStreamsCheckpointer.setConsumeCheckpoint('kafka', topic, message.headers)
+
+    const event = JSON.parse(message.value.toString())
+    await handleEvent(event)
+  },
+})
+```
+
+</CodeGroup>

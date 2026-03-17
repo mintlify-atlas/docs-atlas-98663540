@@ -1,0 +1,90 @@
+---
+title: "Migration overview"
+description: "How dd-trace release lines work, current version status, and how to choose which migration guide to follow."
+---
+
+## Release line policy
+
+Each major version of `dd-trace` constitutes a **release line**. When a new release line ships, the previous one enters **maintenance mode** for one year, after which it reaches **End of Life (EOL)** and no longer receives updates.
+
+Release lines also follow the [Node.js LTS lifecycle](https://nodejs.org/en/about/previous-releases): when a Node.js version reaches EOL, the next `dd-trace` major drops support for it.
+
+## Version status table
+
+| Release line | Node.js required | SSI | K8s injection | Status | EOL |
+|:---:|:---:|:---:|:---:|:---:|:---:|
+| `v5` | >= 18 | Yes | Yes | **Current** | Unknown |
+| `v4` | >= 16 | Yes | Yes | EOL | 2025-01-11 |
+| `v3` | >= 14 | No | Yes | EOL | 2024-05-15 |
+| `v2` | >= 12 | No | No | EOL | 2023-08-15 |
+| `v1` | >= 12 | No | No | EOL | 2022-02-25 |
+
+<Note>
+  Only `v5` is actively maintained. EOL release lines do not receive bug fixes, security patches, or new features.
+</Note>
+
+**SSI** = [Single-Step Install](https://docs.datadoghq.com/tracing/trace_collection/automatic_instrumentation/single-step-apm/?tab=linuxhostorvm)  
+**K8s injection** = [Kubernetes library injection](https://docs.datadoghq.com/tracing/trace_collection/library_injection_local/?tab=kubernetes)
+
+## Migration philosophy
+
+`dd-trace` keeps breaking changes to a minimum. Major version bumps are primarily driven by:
+
+- Dropping support for Node.js versions that have reached EOL
+- Removing APIs that were deprecated for multiple release cycles
+- Adjusting defaults to align with current best practices
+
+In practice this means most applications migrate with only a Node.js upgrade and a package version bump.
+
+## How to check your current version
+
+Run either of the following commands from your project root:
+
+```bash
+npm list dd-trace
+```
+
+```bash
+node -e "console.log(require('dd-trace/package.json').version)"
+```
+
+## General migration steps
+
+<Steps>
+  <Step title="Check your Node.js version">
+    Confirm your runtime meets the minimum Node.js requirement for the target `dd-trace` major. Upgrade Node.js if needed.
+
+    ```bash
+    node --version
+    ```
+  </Step>
+  <Step title="Install the new major">
+    Install the target major and update your `package.json`:
+
+    ```bash
+    npm install dd-trace@5
+    ```
+
+    Or with yarn:
+
+    ```bash
+    yarn add dd-trace@5
+    ```
+  </Step>
+  <Step title="Review the breaking changes">
+    Read the specific migration guide for your upgrade path (see links below). Pay attention to any renamed options, removed APIs, or changed CI Visibility entrypoints.
+  </Step>
+  <Step title="Test your application">
+    Run your test suite and start the application in a staging environment. Verify that traces appear correctly in Datadog and that no startup errors are logged.
+  </Step>
+</Steps>
+
+## Migration guides
+
+| Upgrade path | Guide |
+|---|---|
+| v4 → v5 | [Migrating from v4 to v5](/migration/v4-to-v5) |
+
+## Detailed changelogs
+
+For a full list of changes included in each release, see the [GitHub Releases page](https://github.com/DataDog/dd-trace-js/releases).

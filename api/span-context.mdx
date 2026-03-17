@@ -1,0 +1,174 @@
+---
+title: "SpanContext"
+description: "SpanContext carries the state required to continue a trace across function calls, async boundaries, and process boundaries."
+---
+
+A `SpanContext` holds the immutable identity of a span — its trace ID, span ID, and any baggage items — and is the object you pass to `inject()` and `extract()` for cross-process propagation.
+
+SpanContext is logically divided into two parts:
+
+- **Trace identity** — the trace ID and span ID that identify this span within Datadog.
+- **Baggage** — user-defined key-value pairs that propagate with the trace across service boundaries.
+
+## Getting a SpanContext
+
+You get a `SpanContext` in two ways:
+
+```javascript
+const tracer = require('dd-trace').init()
+const opentracing = require('opentracing')
+
+// From an active span
+const span = tracer.scope().active()
+const ctx = span.context()
+
+// Extracted from an incoming request (cross-process)
+const ctx = tracer.extract(opentracing.FORMAT_HTTP_HEADERS, req.headers)
+// ctx is SpanContext | null
+```
+
+---
+
+## toTraceId
+
+Returns the string representation of the trace ID.
+
+```typescript
+toTraceId(): string
+```
+
+<ResponseField name="returns" type="string">
+  A hex string. Returns a 128-bit trace ID (32 hex characters) when 128-bit trace IDs are enabled, or a 64-bit trace ID (16 hex characters) otherwise.
+</ResponseField>
+
+```javascript
+const ctx = span.context()
+console.log(ctx.toTraceId())
+// e.g. '6a9c7d3e2f1b0a4c8d5e6f7a8b9c0d1e' (128-bit)
+// or   '6a9c7d3e2f1b0a4c' (64-bit)
+```
+
+---
+
+## toSpanId
+
+Returns the string representation of the span ID.
+
+```typescript
+toSpanId(): string
+```
+
+<ResponseField name="returns" type="string">
+  A hex string identifying this specific span.
+</ResponseField>
+
+```javascript
+const ctx = span.context()
+console.log(ctx.toSpanId())
+// e.g. 'a1b2c3d4e5f60718'
+```
+
+---
+
+## toTraceparent
+
+Returns the W3C `traceparent` string representation. Used primarily for Database Monitoring (DBM) correlation.
+
+```typescript
+toTraceparent(): string
+```
+
+<ResponseField name="returns" type="string">
+  A W3C traceparent string in the format `00-{traceId}-{spanId}-{flags}`.
+</ResponseField>
+
+```javascript
+const ctx = span.context()
+console.log(ctx.toTraceparent())
+// e.g. '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
+```
+
+This is the value injected into SQL comments when `dbmPropagationMode` is set to `'full'` in your tracer options.
+
+---
+
+## getBaggageItem
+
+Returns the value of a baggage item by key. Inherited from the OpenTracing `SpanContext` base class.
+
+```typescript
+getBaggageItem(key: string): string | undefined
+```
+
+<ParamField path="key" type="string" required>
+  The baggage key to look up.
+</ParamField>
+
+<ResponseField name="returns" type="string | undefined">
+  The value associated with the key, or `undefined` if not present.
+</ResponseField>
+
+```javascript
+const tenantId = span.context().getBaggageItem('tenant.id')
+```
+
+---
+
+## setBaggageItem
+
+Sets a baggage item on this context. Inherited from the OpenTracing `SpanContext` base class.
+
+<Note>
+Baggage set on a `SpanContext` propagates to all child spans and across process boundaries via `inject()`/`extract()`. Keep baggage small — it is included in every propagated header.
+</Note>
+
+```typescript
+setBaggageItem(key: string, value: string): this
+```
+
+<ParamField path="key" type="string" required>
+  The baggage key.
+</ParamField>
+
+<ParamField path="value" type="string" required>
+  The baggage value.
+</ParamField>
+
+<ResponseField name="returns" type="SpanContext">
+  The context instance for chaining.
+</ResponseField>
+
+```javascript
+span.context().setBaggageItem('tenant.id', 'acme-corp')
+```
+
+---
+
+## Cross-process propagation example
+
+The typical pattern for propagating a trace to a downstream service:
+
+```javascript
+const opentracing = require('opentracing')
+const tracer = require('dd-trace').init()
+
+// --- Producer (outgoing request) ---
+const span = tracer.startSpan('http.request')
+const headers = {}
+
+tracer.inject(span.context(), opentracing.FORMAT_HTTP_HEADERS, headers)
+// Send headers to the downstream service
+
+// --- Consumer (incoming request) ---
+http.createServer((req, res) => {
+  const parentCtx = tracer.extract(opentracing.FORMAT_HTTP_HEADERS, req.headers)
+  // parentCtx is SpanContext | null
+
+  const childSpan = tracer.startSpan('web.request', {
+    childOf: parentCtx, // null is safe here
+  })
+
+  // ...
+  childSpan.finish()
+})
+```

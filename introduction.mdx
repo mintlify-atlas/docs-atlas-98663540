@@ -1,0 +1,92 @@
+---
+title: "Introduction"
+description: "What dd-trace is, how it fits in the Datadog ecosystem, and what you can do with it."
+keywords: ["dd-trace", "apm", "tracing", "node.js", "datadog", "instrumentation"]
+---
+
+`dd-trace` is the official Datadog APM (Application Performance Monitoring) client library for Node.js. It captures distributed traces from your application and sends them to the Datadog Agent, which forwards them to the Datadog platform for storage, visualization, and alerting.
+
+## How it works
+
+The library sits between your application code and the Node.js module loader. When your app starts, `dd-trace` patches supported libraries automatically — no changes to your business logic required. Each inbound request, outgoing HTTP call, database query, or message queue operation becomes a **span**. Related spans are grouped into a **trace** that represents an end-to-end request through your system.
+
+```
+Your Node.js App  →  dd-trace  →  Datadog Agent  →  Datadog Platform
+```
+
+The Datadog Agent is a lightweight process that runs alongside your application (on the same host, in a sidecar container, or as a DaemonSet in Kubernetes). It collects spans over HTTP on `localhost:8126` by default, batches them, and forwards them to Datadog.
+
+## Key capabilities
+
+<CardGroup cols={3}>
+  <Card title="Distributed tracing" icon="diagram-project">
+    Propagate trace context across HTTP, gRPC, message queues, and databases. Visualize request flows across every service in your system.
+  </Card>
+  <Card title="100+ automatic integrations" icon="puzzle-piece">
+    Instrument Express, Fastify, Koa, PostgreSQL, MySQL, Redis, Kafka, OpenAI, and many more without writing any instrumentation code.
+  </Card>
+  <Card title="Application security" icon="shield">
+    Detect and block web attacks in real time with AppSec WAF, IAST, and RASP — all enabled through a single configuration flag.
+  </Card>
+  <Card title="LLM observability" icon="brain">
+    Monitor AI applications built with OpenAI, Anthropic, LangChain, LangGraph, and Vertex AI out of the box.
+  </Card>
+  <Card title="Continuous profiler" icon="chart-line">
+    Identify CPU and memory hotspots in production with always-on, low-overhead profiling.
+  </Card>
+  <Card title="Data streams monitoring" icon="water">
+    Track end-to-end latency and throughput across Kafka, SQS, SNS, and other event-driven pipelines.
+  </Card>
+  <Card title="Dynamic instrumentation" icon="bug">
+    Capture variable values and stack traces in production without redeployment or restarts.
+  </Card>
+  <Card title="OpenTelemetry compatibility" icon="circle-nodes">
+    Use the OpenTelemetry API with Datadog's backend — keep your instrumentation code vendor-neutral.
+  </Card>
+  <Card title="Log correlation" icon="file-lines">
+    Automatically inject trace and span IDs into structured logs for seamless navigation between traces and logs in Datadog.
+  </Card>
+</CardGroup>
+
+## Version support
+
+The library follows the Node.js LTS lifecycle. Each major release drops support for Node.js versions that have reached end-of-life.
+
+| Release line | Node.js | SSI | K8s injection | Status | Initial release | End of life |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| `v5` | >= 18 | Yes | Yes | **Current** | 2024-01-11 | — |
+| `v4` | >= 16 | Yes | Yes | EOL | 2023-05-12 | 2025-01-11 |
+| `v3` | >= 14 | No | Yes | EOL | 2022-08-15 | 2024-05-15 |
+| `v2` | >= 12 | No | No | EOL | 2022-01-28 | 2023-08-15 |
+| `v1` | >= 12 | No | No | EOL | 2021-07-13 | 2022-02-25 |
+
+**SSI** = Single-Step Install. **EOL** = End of Life.
+
+<Note>
+  For all new projects, use `v5`. It is the only actively maintained release line and requires Node.js 18 or later.
+</Note>
+
+If you need to run on an EOL version of Node.js, you can install an older release by pinning the major version:
+
+```bash
+npm install dd-trace@4
+```
+
+EOL release lines no longer receive updates. See the [migration guide](/migration/v4-to-v5) if you are upgrading from an older version.
+
+## Where to go next
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Install dd-trace and instrument your first Express app in minutes.
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Full installation reference — all package managers, CJS, ESM, Docker, and Lambda.
+  </Card>
+  <Card title="Configuration" icon="sliders" href="/configuration/options">
+    All TracerOptions and environment variables for controlling tracer behavior.
+  </Card>
+  <Card title="Integrations" icon="plug" href="/integrations/overview">
+    Browse the full list of supported frameworks, databases, and libraries.
+  </Card>
+</CardGroup>

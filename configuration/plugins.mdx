@@ -1,0 +1,329 @@
+---
+title: 'Plugin configuration'
+description: 'How to configure, disable, and customize dd-trace instrumentation plugins.'
+---
+
+dd-trace ships with built-in instrumentation plugins for over 80 popular Node.js libraries. By default, all plugins load automatically when you call `tracer.init()`.
+
+## How plugins work
+
+When a supported module is `require`d, dd-trace patches it transparently. No changes to your application code are needed. The tracer tracks spans for incoming and outgoing requests, database queries, message queue operations, and more.
+
+To opt out of all automatic instrumentation, set `plugins: false` in `tracer.init()`:
+
+```javascript
+const tracer = require('dd-trace').init({
+  plugins: false,
+})
+```
+
+You can then enable individual plugins with `tracer.use()`.
+
+## Configuring a plugin
+
+Call `tracer.use(pluginName, options)` to configure a plugin. You can call this before or after `tracer.init()`.
+
+```javascript
+const tracer = require('dd-trace').init()
+
+// Override the service name for PostgreSQL spans
+tracer.use('pg', {
+  service: 'postgres-primary',
+})
+
+// Capture request headers on Express spans
+tracer.use('express', {
+  headers: ['x-request-id', 'x-correlation-id'],
+})
+```
+
+## Disabling a plugin
+
+Pass `false` as the second argument to disable a plugin entirely:
+
+```javascript
+tracer.use('fs', false)
+```
+
+You can also disable plugins via environment variable without touching code:
+
+```bash
+DD_TRACE_EXPRESS_ENABLED=false node server.js
+```
+
+Or disable multiple plugins at startup:
+
+```bash
+DD_TRACE_DISABLED_PLUGINS=fs,dns node server.js
+```
+
+## Common plugin options
+
+These options are available on all plugins that extend `Integration` or `Instrumentation`.
+
+<ParamField body="service" type="string">
+  Override the service name for spans produced by this plugin. For some plugins (e.g. `pg`, `mysql`, `oracledb`) you can also pass a function that receives the connection parameters and returns the service name.
+
+  ```javascript
+  tracer.use('pg', {
+    service: (params) => `pg-${params.database}`,
+  })
+  ```
+</ParamField>
+
+<ParamField body="enabled" type="boolean" default="true">
+  Set to `false` to disable this plugin. Equivalent to calling `tracer.use(plugin, false)`.
+</ParamField>
+
+<ParamField body="measured" type="boolean | object">
+  Whether to measure the span (send it to the Datadog backend). You can also provide a key-value map of span names to booleans for per-operation control.
+</ParamField>
+
+### HTTP plugin options
+
+Plugins that instrument HTTP servers (express, fastify, hapi, koa, restify, …) and clients (http, fetch, undici, …) support these additional options.
+
+<ParamField body="allowlist" type="string | RegExp | Function | Array">
+  URLs or paths to instrument. Requests that do not match any entry are not traced. Accepts a string, RegExp, a predicate function, or an array of any combination.
+
+  - For HTTP clients the value is the full outbound URL.
+  - For HTTP servers the value is the inbound path.
+
+  Defaults to matching everything.
+</ParamField>
+
+<ParamField body="blocklist" type="string | RegExp | Function | Array">
+  URLs or paths to **never** instrument, even if they match `allowlist`. Same format as `allowlist`. Defaults to an empty list.
+</ParamField>
+
+<ParamField body="filter" type="(urlOrPath: string) => boolean">
+  Custom filter function. Takes precedence over `allowlist` / `blocklist` when provided. Return `true` to instrument the request or `false` to skip it.
+
+  ```javascript
+  tracer.use('express', {
+    filter: (path) => !path.startsWith('/health'),
+  })
+  ```
+</ParamField>
+
+<ParamField body="headers" type="string[]">
+  HTTP header names whose values are added as span metadata. Header names are case-insensitive.
+
+  ```javascript
+  tracer.use('express', {
+    headers: ['x-request-id', 'x-forwarded-for'],
+  })
+  ```
+</ParamField>
+
+<ParamField body="validateStatus" type="(code: number) => boolean">
+  Function that determines whether an HTTP status code is an error. Return `true` for success, `false` for error.
+
+  - Server default: `code => code < 500`
+  - Client default: `code => code < 400 || code >= 500`
+</ParamField>
+
+<ParamField body="hooks" type="object">
+  Callbacks executed just before a span finishes, giving you the opportunity to add custom tags.
+
+  ```javascript
+  tracer.use('express', {
+    hooks: {
+      request: (span, req, res) => {
+        span.setTag('user.id', req.user?.id)
+      },
+    },
+  })
+  ```
+</ParamField>
+
+#### HTTP server-only options
+
+<ParamField body="middleware" type="boolean" default="true">
+  Whether to create spans for individual middleware functions.
+</ParamField>
+
+<ParamField body="queryStringObfuscation" type="boolean | string | RegExp">
+  Controls obfuscation of query string values in `http.url`.
+
+  - `true` — redact all query string values
+  - `false` — disable obfuscation
+  - `string` / `RegExp` — redact values matching the pattern
+</ParamField>
+
+#### HTTP client-only options
+
+<ParamField body="splitByDomain" type="boolean" default="false">
+  Use the remote host as the service name instead of the default client service name.
+</ParamField>
+
+<ParamField body="propagationBlocklist" type="string | RegExp | Function | Array">
+  List of URLs to which trace propagation headers should **not** be injected.
+</ParamField>
+
+### Redis / ioredis / iovalkey command filtering
+
+<ParamField body="allowlist" type="string | RegExp | Function | Array">
+  Commands to instrument. Commands must be lowercase. Defaults to matching all commands.
+</ParamField>
+
+<ParamField body="blocklist" type="string | RegExp | Function | Array">
+  Commands to exclude from instrumentation. Takes precedence over `allowlist`.
+</ParamField>
+
+<ParamField body="filter" type="(command: string) => boolean">
+  Custom command filter function. Takes precedence over `allowlist` / `blocklist` when provided.
+</ParamField>
+
+<ParamField body="splitByInstance" type="boolean" default="false">
+  Use a different service name for each Redis instance based on the connection name.
+</ParamField>
+
+## Plugin examples
+
+<CodeGroup>
+
+```javascript express
+const tracer = require('dd-trace').init()
+
+tracer.use('express', {
+  // Override service name
+  service: 'web-frontend',
+
+  // Only trace /api/* routes
+  allowlist: /^\/api\//,
+
+  // Capture these headers as span tags
+  headers: ['x-request-id', 'x-user-id'],
+
+  // Obfuscate query strings in http.url
+  queryStringObfuscation: true,
+
+  // Custom hook to add business tags
+  hooks: {
+    request: (span, req, res) => {
+      if (req.user) {
+        span.setTag('user.id', req.user.id)
+        span.setTag('user.role', req.user.role)
+      }
+    },
+  },
+})
+```
+
+```javascript pg
+const tracer = require('dd-trace').init()
+
+tracer.use('pg', {
+  // Dynamic service name based on the target database
+  service: (params) => `pg-${params.database}`,
+
+  // Enable full DBM trace propagation
+  dbmPropagationMode: 'full',
+})
+```
+
+```javascript redis
+const tracer = require('dd-trace').init()
+
+tracer.use('ioredis', {
+  service: 'session-cache',
+
+  // Skip PING and INFO commands
+  blocklist: ['ping', 'info'],
+
+  // Separate service names per Redis instance
+  splitByInstance: true,
+})
+```
+
+</CodeGroup>
+
+## Available plugins
+
+The table below lists every plugin name you can pass to `tracer.use()` and the corresponding `DD_TRACE_<PLUGIN>_ENABLED` environment variable pattern.
+
+<Tip>
+  Plugin names with hyphens (e.g. `aws-sdk`) use underscores in environment variable names (e.g. `DD_TRACE_AWS_SDK_ENABLED`).
+</Tip>
+
+| Plugin name | Instrumented library |
+|---|---|
+| `aerospike` | aerospike |
+| `ai` | Vercel AI SDK |
+| `amqp10` | amqp10 |
+| `amqplib` | amqplib |
+| `anthropic` | @anthropic-ai/sdk |
+| `apollo` | @apollo/gateway |
+| `avsc` | avsc |
+| `aws-sdk` | aws-sdk, @aws-sdk/client-* |
+| `azure-event-hubs` | @azure/event-hubs |
+| `azure-functions` | @azure/functions |
+| `azure-service-bus` | @azure/service-bus |
+| `azure-durable-functions` | durable-functions |
+| `bullmq` | bullmq |
+| `bunyan` | bunyan (log injection) |
+| `cassandra-driver` | cassandra-driver |
+| `child_process` | node:child_process |
+| `confluentinc-kafka-javascript` | @confluentinc/kafka-javascript |
+| `connect` | connect |
+| `couchbase` | couchbase |
+| `cucumber` | @cucumber/cucumber |
+| `cypress` | cypress |
+| `dns` | node:dns |
+| `elasticsearch` | @elastic/elasticsearch, elasticsearch |
+| `express` | express |
+| `fastify` | fastify |
+| `fetch` | global fetch |
+| `find-my-way` | find-my-way |
+| `fs` | node:fs |
+| `generic-pool` | generic-pool |
+| `google-cloud-pubsub` | @google-cloud/pubsub |
+| `google-cloud-vertexai` | @google-cloud/vertexai |
+| `google-genai` | @google/genai |
+| `graphql` | graphql |
+| `grpc` | @grpc/grpc-js, grpc |
+| `hapi` | @hapi/hapi |
+| `hono` | hono |
+| `http` | node:http |
+| `http2` | node:http2 |
+| `ioredis` | ioredis |
+| `iovalkey` | iovalkey |
+| `jest` | jest |
+| `kafkajs` | kafkajs |
+| `knex` | knex |
+| `koa` | koa |
+| `langchain` | langchain |
+| `langgraph` | @langchain/langgraph |
+| `mariadb` | mariadb |
+| `memcached` | memcached |
+| `microgateway-core` | microgateway-core |
+| `mocha` | mocha |
+| `moleculer` | moleculer |
+| `mongodb-core` | mongodb, mongoose |
+| `mongoose` | mongoose |
+| `mysql` | mysql |
+| `mysql2` | mysql2 |
+| `net` | node:net |
+| `next` | next |
+| `nyc` | nyc |
+| `openai` | openai |
+| `opensearch` | @opensearch-project/opensearch |
+| `oracledb` | oracledb |
+| `pg` | pg |
+| `pino` | pino (log injection) |
+| `playwright` | playwright |
+| `prisma` | @prisma/client |
+| `protobufjs` | protobufjs |
+| `redis` | redis |
+| `restify` | restify |
+| `rhea` | rhea |
+| `router` | router |
+| `selenium` | selenium-webdriver |
+| `sharedb` | sharedb |
+| `tedious` | tedious |
+| `undici` | undici |
+| `vitest` | vitest |
+| `web` | (internal HTTP helpers) |
+| `winston` | winston (log injection) |
+| `ws` | ws |

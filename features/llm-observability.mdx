@@ -1,0 +1,208 @@
+---
+title: "LLM Observability"
+description: "Trace LLM calls, chains, and agentic workflows with the dd-trace LLMObs SDK to monitor latency, token usage, prompts, and completions."
+keywords: ["LLM observability", "llmobs", "AI tracing", "GPT", "OpenAI", "Anthropic", "dd-trace"]
+---
+
+LLM Observability gives you full visibility into calls to large language models and the chains and agents that orchestrate them. It captures inputs, outputs, token counts, latency, model metadata, and custom evaluation metrics so you can monitor quality, debug failures, and optimize cost.
+
+## How it works
+
+You can use LLM Observability in two ways:
+
+- **Automatic instrumentation**: If you use a supported AI library (OpenAI, Anthropic, Cohere, Google Vertex AI, Bedrock, LangChain, and others), `dd-trace` instruments the library automatically. All calls appear in Datadog without any code changes.
+- **Manual SDK**: Use `tracer.llmobs.trace()`, `tracer.llmobs.wrap()`, and `tracer.llmobs.annotate()` to instrument custom code or to add detail that automatic instrumentation does not capture.
+
+## Enable LLM Observability
+
+<Steps>
+  <Step title="Set the required environment variables">
+    ```bash
+    DD_LLMOBS_ENABLED=1 \
+    DD_LLMOBS_ML_APP=my-ai-app \
+    node server.js
+    ```
+
+    - `DD_LLMOBS_ENABLED`: must be `1` or `true` to activate the SDK. Note that this environment variable **takes precedence** over the `llmobs` programmatic option.
+    - `DD_LLMOBS_ML_APP`: the name that groups all traces for your ML application in Datadog.
+  </Step>
+
+  <Step title="Initialize the tracer">
+    LLM Observability is part of `dd-trace`. Initialize the tracer as normal before the rest of your application:
+
+    ```javascript
+    // tracer.js — must be required first
+    const tracer = require('dd-trace').init({
+      service: 'my-node-app',
+    })
+    module.exports = tracer
+    ```
+
+    You can also enable LLMObs programmatically:
+
+    ```javascript
+    const tracer = require('dd-trace').init({
+      llmobs: {
+        mlApp: 'my-ai-app',
+      },
+    })
+    ```
+
+    <Note>
+      `DD_LLMOBS_ENABLED` takes precedence over the `llmobs` init option. If the environment variable is set to `false`, calling `tracer.llmobs.enable()` has no effect.
+    </Note>
+  </Step>
+
+  <Step title="(Optional) Enable agentless mode">
+    If you cannot run a Datadog Agent alongside your service (for example in a serverless environment), enable agentless mode to send LLMObs data directly to the Datadog intake:
+
+    ```bash
+    DD_LLMOBS_ENABLED=1 \
+    DD_LLMOBS_ML_APP=my-ai-app \
+    DD_LLMOBS_AGENTLESS_ENABLED=true \
+    DD_API_KEY=<your-api-key> \
+    node server.js
+    ```
+  </Step>
+</Steps>
+
+## Span kinds
+
+Every LLMObs span has a `kind` that describes what the span represents:
+
+| Kind | Description |
+| --- | --- |
+| `llm` | A single call to an LLM. Captures the model name, provider, input messages, and output. |
+| `embedding` | Converts text to vector embeddings. |
+| `retrieval` | Fetches documents from a vector store or search index. |
+| `tool` | Executes a tool or function called by an agent. |
+| `task` | A discrete unit of work within a workflow. |
+| `workflow` | A sequence of operations that may include LLM calls, tools, and tasks. |
+| `agent` | An autonomous agent loop that may call other spans recursively. |
+
+## Manual SDK
+
+### Trace a function
+
+Use `tracer.llmobs.trace()` to instrument a single function call. The span finishes when the function returns or its returned promise resolves:
+
+```javascript
+const tracer = require('dd-trace')
+const { llmobs } = tracer
+
+async function callOpenAI(messages) {
+  return llmobs.trace(
+    { kind: 'llm', name: 'openai-chat', modelName: 'gpt-4o', modelProvider: 'openai' },
+    async (span) => {
+      const response = await openai.chat.completions.create({
+        model: 'gpt-4o',
+        messages,
+      })
+
+      llmobs.annotate(span, {
+        inputData: messages,
+        outputData: response.choices[0].message,
+        metrics: {
+          inputTokens: response.usage.prompt_tokens,
+          outputTokens: response.usage.completion_tokens,
+          totalTokens: response.usage.total_tokens,
+        },
+      })
+
+      return response
+    }
+  )
+}
+```
+
+### Wrap a function
+
+Use `tracer.llmobs.wrap()` to wrap a function so every call automatically creates a span:
+
+```javascript
+const tracer = require('dd-trace')
+const { llmobs } = tracer
+
+const summarize = llmobs.wrap(
+  { kind: 'task', name: 'summarize' },
+  async function summarize(text) {
+    return callOpenAI([{ role: 'user', content: `Summarize: ${text}` }])
+  }
+)
+
+// Every call to summarize() creates an LLMObs span automatically.
+const result = await summarize(longDocument)
+```
+
+### Annotate a span
+
+Call `tracer.llmobs.annotate()` inside a traced function to add inputs, outputs, metadata, metrics, and tags:
+
+```javascript
+llmobs.annotate(span, {
+  inputData: [{ role: 'user', content: 'What is the capital of France?' }],
+  outputData: { role: 'assistant', content: 'Paris.' },
+  metadata: { temperature: 0.7, maxTokens: 100 },
+  metrics: { inputTokens: 12, outputTokens: 3, totalTokens: 15 },
+  tags: { environment: 'production', experiment: 'v2' },
+})
+```
+
+If you omit the `span` argument, `annotate()` targets the currently active LLMObs span.
+
+### Nest spans
+
+Spans automatically form a hierarchy based on the call stack. A workflow span can contain task and LLM spans:
+
+```javascript
+async function runPipeline(query) {
+  return llmobs.trace(
+    { kind: 'workflow', name: 'rag-pipeline' },
+    async () => {
+      // This task span is a child of the workflow span.
+      const docs = await llmobs.trace(
+        { kind: 'retrieval', name: 'vector-search' },
+        async (span) => {
+          const results = await vectorStore.search(query)
+          llmobs.annotate(span, { outputData: results })
+          return results
+        }
+      )
+
+      // This LLM span is also a child of the workflow span.
+      return callOpenAI([
+        { role: 'system', content: `Context: ${docs.join('\n')}` },
+        { role: 'user', content: query },
+      ])
+    }
+  )
+}
+```
+
+## Flush remaining spans
+
+In short-lived processes (scripts, Lambda functions, batch jobs), call `tracer.llmobs.flush()` before the process exits to ensure all spans are sent:
+
+```javascript
+async function main() {
+  await runPipeline('What is machine learning?')
+  tracer.llmobs.flush()
+}
+
+main().catch(console.error)
+```
+
+## Evaluation metrics
+
+You can submit custom evaluation metrics for any span to track quality scores, labels, or pass/fail results:
+
+```javascript
+const spanContext = llmobs.exportSpan(span)
+
+llmobs.submitEvaluation(spanContext, {
+  label: 'faithfulness',
+  metricType: 'score',   // 'score' | 'categorical' | 'boolean' | 'json'
+  value: 0.92,
+  tags: { evaluator: 'internal' },
+})
+```

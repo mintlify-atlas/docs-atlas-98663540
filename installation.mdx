@@ -1,0 +1,206 @@
+---
+title: "Installation"
+description: "Install dd-trace in any Node.js environment — all package managers, CJS, ESM, Docker, and AWS Lambda."
+keywords: ["dd-trace", "install", "npm", "yarn", "pnpm", "esm", "commonjs", "docker", "lambda", "node.js"]
+---
+
+## Node.js version requirements
+
+`dd-trace` v5 requires **Node.js 18 or later**. This aligns with the Node.js LTS lifecycle.
+
+| dd-trace version | Node.js required | Status |
+|:---:|:---:|:---:|
+| `v5` (latest) | >= 18 | Active |
+| `v4` | >= 16 | EOL |
+| `v3` | >= 14 | EOL |
+| `v2` | >= 12 | EOL |
+
+<Note>
+  Only `v5` receives updates. If you need to run on an EOL version of Node.js, pin to the matching major: `npm install dd-trace@4`.
+</Note>
+
+## Install the package
+
+<CodeGroup>
+
+```bash npm
+npm install dd-trace
+```
+
+```bash yarn
+yarn add dd-trace
+```
+
+```bash pnpm
+pnpm add dd-trace
+```
+
+</CodeGroup>
+
+Install without specifying a version to get the latest `v5` release. To pin to an older major:
+
+```bash
+npm install dd-trace@4
+```
+
+## CommonJS (CJS) setup
+
+For applications using `require()`, initialize the tracer at the very top of your entry point — before any other `require` calls.
+
+```javascript
+// Must be the first require in your entry point
+const tracer = require('dd-trace').init()
+```
+
+### Zero-code-change approach with `--require`
+
+Use `dd-trace/init` as a `--require` argument to initialize the tracer without modifying any source files:
+
+```bash
+node --require dd-trace/init server.js
+```
+
+You can also set this through the `NODE_OPTIONS` environment variable, which is useful in containerized environments or CI pipelines:
+
+```bash
+NODE_OPTIONS='--require dd-trace/init' node server.js
+```
+
+`dd-trace/init` calls `require('dd-trace').init()` automatically. The tracer reads configuration from environment variables (`DD_SERVICE`, `DD_ENV`, `DD_VERSION`, etc.).
+
+## ES modules (ESM) setup
+
+ESM applications need an additional command-line flag to enable instrumentation. Because ESM `import` statements are hoisted and resolved before any module-level code runs, you cannot initialize the tracer with a top-level `import`.
+
+### Using `--import` (recommended)
+
+```bash
+node --import dd-trace/initialize.mjs server.mjs
+```
+
+`initialize.mjs` both initializes the tracer and registers the ESM loader hook that enables automatic instrumentation. This file serves double duty: when used with `--import`, it loads `init.js` and registers the loader; when used with `--loader`, it acts as the loader hook itself.
+
+Set via `NODE_OPTIONS` for containerized environments:
+
+```bash
+NODE_OPTIONS='--import dd-trace/initialize.mjs' node server.mjs
+```
+
+<Warning>
+  Do not `import` dd-trace at the top of your ESM source files to initialize the tracer. ESM `import` statements are evaluated before any module body runs, so frameworks and database clients loaded after your import may already be past the point where patching is effective. Always use the `--import` flag instead.
+</Warning>
+
+### Using `--loader` (legacy)
+
+```bash
+node --loader dd-trace/initialize.mjs server.mjs
+```
+
+The `--loader` flag is an older approach. Use `--import` for Node.js 18.19+ and Node.js 20.6+.
+
+## Programmatic registration with `register.js`
+
+For advanced use cases — such as programmatically loading the tracer from within a Node.js script — `register.js` uses the `node:module` API to register the ESM loader hook:
+
+```javascript
+// register.js uses module.register() (requires Node.js >= 20.6.0)
+const { register } = require('node:module')
+const { pathToFileURL } = require('node:url')
+
+register('./loader-hook.mjs', pathToFileURL(__filename))
+```
+
+This pattern is primarily for tooling authors who need to register the hook from within their own setup scripts rather than via command-line flags.
+
+## Docker and containerized environments
+
+In containers, set configuration through environment variables and use `NODE_OPTIONS` to load the tracer without changing your application entrypoint.
+
+```dockerfile Dockerfile
+FROM node:20-alpine
+
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY . .
+
+# Configure dd-trace via environment variables
+ENV DD_SERVICE=my-node-app
+ENV DD_ENV=production
+
+# Use NODE_OPTIONS to load the tracer at startup
+ENV NODE_OPTIONS='--require dd-trace/init'
+
+CMD ["node", "server.js"]
+```
+
+The Datadog Agent typically runs as a sidecar container or as a DaemonSet (Kubernetes). Set `DD_AGENT_HOST` if the Agent is not reachable at `localhost`:
+
+```bash
+DD_AGENT_HOST=datadog-agent node server.js
+```
+
+### Docker Compose example
+
+```yaml docker-compose.yml
+services:
+  app:
+    build: .
+    environment:
+      - DD_SERVICE=my-node-app
+      - DD_ENV=development
+      - DD_AGENT_HOST=datadog-agent
+      - NODE_OPTIONS=--require dd-trace/init
+    depends_on:
+      - datadog-agent
+
+  datadog-agent:
+    image: gcr.io/datadoghq/agent:latest
+    environment:
+      - DD_API_KEY=${DD_API_KEY}
+      - DD_APM_ENABLED=true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+```
+
+## AWS Lambda
+
+For Lambda functions, use the [`datadog-lambda-js`](https://github.com/DataDog/datadog-lambda-js) package instead of adding `dd-trace` directly. `datadog-lambda-js` depends on `dd-trace` internally and adds Lambda-specific telemetry, metric flushing, and distributed tracing support for API Gateway, SQS, and other AWS services.
+
+```bash
+npm install datadog-lambda-js
+```
+
+<Note>
+  If you encounter instrumentation issues specific to Lambda (cold starts, invocation context, etc.), open issues in the [datadog-lambda-js repository](https://github.com/DataDog/datadog-lambda-js). Core tracing issues not related to the Lambda environment can be reported in the [dd-trace-js repository](https://github.com/DataDog/dd-trace-js).
+</Note>
+
+## Single-Step Instrumentation (SSI)
+
+Datadog's [Single-Step Install](https://docs.datadoghq.com/tracing/trace_collection/automatic_instrumentation/single-step-apm/) (SSI) can inject `dd-trace` into your Node.js process automatically at the infrastructure level — no package installation or code changes required. SSI is supported on:
+
+- Linux hosts and VMs (v5 and v4)
+- Kubernetes (v5 and v4)
+
+For SSI setup, follow the [Single-Step APM documentation](https://docs.datadoghq.com/tracing/trace_collection/automatic_instrumentation/single-step-apm/).
+
+## Bundling
+
+If you bundle your Node.js application with esbuild, webpack, or another bundler, read the [bundling guide](/guides/bundling) before adding `dd-trace`. Bundlers affect how modules are loaded, which can interfere with automatic instrumentation. Datadog provides an esbuild plugin and documents caveats for other bundlers.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    See a complete working example with an Express app.
+  </Card>
+  <Card title="Configuration" icon="sliders" href="/configuration/options">
+    All TracerOptions and environment variables.
+  </Card>
+  <Card title="ESM support" icon="file-code" href="/guides/esm-support">
+    Detailed guide to ES module support and the loader hook.
+  </Card>
+  <Card title="Serverless" icon="cloud" href="/guides/serverless">
+    Lambda, GCP Functions, and Azure Functions setup.
+  </Card>
+</CardGroup>

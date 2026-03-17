@@ -1,0 +1,500 @@
+---
+title: 'Configuration options'
+description: 'Complete reference for all TracerOptions fields you can pass to tracer.init().'
+---
+
+Pass options to `tracer.init()` to configure the tracer programmatically. Every option that has a corresponding environment variable can also be set via that variable; the table entry for each option lists the relevant env var(s). **Programmatic configuration takes precedence over environment variables** unless otherwise noted.
+
+```javascript
+const tracer = require('dd-trace').init({
+  service: 'my-service',
+  env: 'production',
+  version: '1.0.0',
+})
+```
+
+## General
+
+<ParamField body="service" type="string">
+  The service name for this application. If not set, the tracer attempts to infer the name from `package.json`. In serverless environments the function name takes precedence.
+
+  **Env:** `DD_SERVICE`, `OTEL_SERVICE_NAME`
+</ParamField>
+
+<ParamField body="env" type="string">
+  The deployment environment, for example `prod`, `staging`, or `dev`.
+
+  **Env:** `DD_ENV`
+</ParamField>
+
+<ParamField body="version" type="string">
+  The version of the application. If not set, the tracer attempts to infer it from `package.json`.
+
+  **Env:** `DD_VERSION`
+</ParamField>
+
+<ParamField body="hostname" type="string" default="127.0.0.1">
+  The hostname of the Datadog Agent the tracer submits traces to.
+
+  **Env:** `DD_AGENT_HOST`
+</ParamField>
+
+<ParamField body="port" type="number | string" default="8126">
+  The port of the Datadog Agent the tracer submits traces to.
+
+  **Env:** `DD_TRACE_AGENT_PORT`
+</ParamField>
+
+<ParamField body="url" type="string">
+  The full URL of the Datadog Agent, for example `http://agent:8126`. Takes priority over `hostname` and `port` when set.
+
+  **Env:** `DD_TRACE_AGENT_URL`
+</ParamField>
+
+<ParamField body="serviceMapping" type="object">
+  Per-plugin service name overrides. Provide a map of plugin name to service name, for example `{ pg: 'postgres-primary' }`.
+
+  **Env:** `DD_SERVICE_MAPPING`
+</ParamField>
+
+<ParamField body="tags" type="object">
+  Global tags assigned to every span, for example `{ team: 'backend' }`.
+
+  **Env:** `DD_TAGS`, `OTEL_RESOURCE_ATTRIBUTES`
+</ParamField>
+
+<ParamField body="apmTracingEnabled" type="boolean" default="true">
+  Set to `false` to disable APM tracing while keeping standalone products (AppSec, Profiling) running.
+
+  **Env:** `DD_APM_TRACING_ENABLED`
+</ParamField>
+
+---
+
+## Tracing
+
+<ParamField body="sampleRate" type="number">
+  Global ingestion sample rate between `0` and `1`. Controls how many traces are sent from the agent to the Datadog backend.
+
+  **Env:** `DD_TRACE_SAMPLE_RATE`, `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`
+</ParamField>
+
+<ParamField body="rateLimit" type="number">
+  Maximum number of traces per second allowed through after sampling rules are applied. Defaults to deferring the decision to the agent.
+
+  **Env:** `DD_TRACE_RATE_LIMIT`
+</ParamField>
+
+<ParamField body="samplingRules" type="SamplingRule[]" default="[]">
+  Priority-sampling rules applied before the global sample rate. Each rule is an object with optional `service` (string or RegExp), optional `name` (string or RegExp), and required `sampleRate` (number between 0 and 1).
+
+  ```javascript
+  samplingRules: [
+    { service: 'my-api', sampleRate: 1.0 },
+    { service: /worker-.*/, name: 'job.run', sampleRate: 0.1 },
+  ]
+  ```
+
+  **Env:** `DD_TRACE_SAMPLING_RULES`
+</ParamField>
+
+<ParamField body="spanSamplingRules" type="SpanSamplingRule[]" default="[]">
+  Span-level sampling rules that keep individual spans even when the enclosing trace is dropped. Each rule accepts optional `service`, `name`, `sampleRate`, and `maxPerSecond` fields.
+
+  **Env:** `DD_SPAN_SAMPLING_RULES`, `DD_SPAN_SAMPLING_RULES_FILE`
+</ParamField>
+
+<ParamField body="flushInterval" type="number" default="2000">
+  Interval in milliseconds at which the tracer flushes buffered traces to the agent.
+
+  **Env:** `DD_TRACE_FLUSH_INTERVAL`
+</ParamField>
+
+<ParamField body="flushMinSpans" type="number" default="1000">
+  Number of spans that triggers a partial trace export, preventing unbounded memory usage for very large traces.
+
+  **Env:** `DD_TRACE_PARTIAL_FLUSH_MIN_SPANS`
+</ParamField>
+
+<ParamField body="tracePropagationStyle" type="string[] | PropagationStyle">
+  Context propagation formats to use for injection and extraction. Accepts an array of style names (applied to both inject and extract) or an object with separate `inject` and `extract` arrays.
+
+  Supported values include `datadog`, `tracecontext`, `b3`, `b3multi`.
+
+  ```javascript
+  // Uniform inject + extract
+  tracePropagationStyle: ['datadog', 'tracecontext']
+
+  // Fine-grained control
+  tracePropagationStyle: {
+    inject: ['datadog', 'tracecontext'],
+    extract: ['datadog', 'tracecontext', 'b3'],
+  }
+  ```
+
+  **Env:** `DD_TRACE_PROPAGATION_STYLE`, `DD_TRACE_PROPAGATION_STYLE_INJECT`, `DD_TRACE_PROPAGATION_STYLE_EXTRACT`, `OTEL_PROPAGATORS`
+</ParamField>
+
+---
+
+## Features
+
+<ParamField body="logInjection" type="boolean" default="true">
+  Automatically inject trace and span identifiers into log records so you can correlate logs with traces.
+
+  **Env:** `DD_LOGS_INJECTION`
+</ParamField>
+
+<ParamField body="plugins" type="boolean" default="true">
+  Whether to load all built-in instrumentation plugins automatically. Set to `false` to opt out of all auto-instrumentation, then enable plugins selectively using `tracer.use()`.
+</ParamField>
+
+<ParamField body="profiling" type="boolean">
+  Enable continuous profiling. When enabled, the tracer collects CPU and heap profiles and sends them to Datadog.
+
+  **Env:** `DD_PROFILING_ENABLED`
+</ParamField>
+
+<ParamField body="runtimeMetrics" type="boolean | object" default="false">
+  Enable runtime metrics collection. Pass `true` to enable all metrics, or an object to control individual metric types:
+
+  ```javascript
+  runtimeMetrics: {
+    enabled: true,  // DD_RUNTIME_METRICS_ENABLED
+    gc: true,       // DD_RUNTIME_METRICS_GC_ENABLED
+    eventLoop: true // DD_RUNTIME_METRICS_EVENT_LOOP_ENABLED
+  }
+  ```
+
+  **Env:** `DD_RUNTIME_METRICS_ENABLED`
+</ParamField>
+
+<ParamField body="runtimeMetricsRuntimeId" type="boolean" default="false">
+  Add an auto-generated `runtime-id` tag to runtime metrics.
+
+  **Env:** `DD_RUNTIME_METRICS_RUNTIME_ID_ENABLED`
+</ParamField>
+
+<ParamField body="dsmEnabled" type="boolean" default="false">
+  Enable Data Streams Monitoring.
+
+  **Env:** `DD_DATA_STREAMS_ENABLED`
+</ParamField>
+
+<ParamField body="dbmPropagationMode" type="string" default="disabled">
+  Database Monitoring to APM link mode. Possible values: `disabled`, `service`, `full`.
+
+  - `disabled` — no propagation
+  - `service` — injects service-level context
+  - `full` — injects full trace context (may affect query plan caching)
+
+  **Env:** `DD_DBM_PROPAGATION_MODE`
+</ParamField>
+
+<ParamField body="clientIpEnabled" type="boolean" default="false">
+  Collect the client IP address from relevant request headers and set it on spans as `http.client_ip`.
+
+  **Env:** `DD_TRACE_CLIENT_IP_ENABLED`
+</ParamField>
+
+<ParamField body="clientIpHeader" type="string">
+  Custom header name to source the `http.client_ip` tag from, overriding the default detection logic.
+
+  **Env:** `DD_TRACE_CLIENT_IP_HEADER`
+</ParamField>
+
+<ParamField body="reportHostname" type="boolean" default="false">
+  Report the service host's hostname as a span tag. Useful when the agent runs on a separate host.
+
+  **Env:** `DD_TRACE_REPORT_HOSTNAME`
+</ParamField>
+
+<ParamField body="startupLogs" type="boolean" default="false">
+  Print startup diagnostic information to the console.
+
+  **Env:** `DD_TRACE_STARTUP_LOGS`
+</ParamField>
+
+---
+
+## AppSec
+
+Pass `appsec: true` as shorthand, or provide an object to configure individual options.
+
+```javascript
+tracer.init({
+  appsec: {
+    enabled: true,
+    rateLimit: 100,
+  }
+})
+```
+
+<ParamField body="appsec.enabled" type="boolean">
+  Enable Application Security Management (AppSec).
+
+  **Env:** `DD_APPSEC_ENABLED`
+</ParamField>
+
+<ParamField body="appsec.rules" type="string">
+  Path to a custom WAF rules file. When not set, the built-in default ruleset is used.
+
+  **Env:** `DD_APPSEC_RULES`
+</ParamField>
+
+<ParamField body="appsec.rateLimit" type="number" default="100">
+  Maximum number of attack-related traces sampled per second.
+
+  **Env:** `DD_APPSEC_TRACE_RATE_LIMIT`
+</ParamField>
+
+<ParamField body="appsec.wafTimeout" type="number" default="5000">
+  Maximum time in microseconds the WAF is allowed to run synchronously per request.
+
+  **Env:** `DD_APPSEC_WAF_TIMEOUT`
+</ParamField>
+
+<ParamField body="appsec.obfuscatorKeyRegex" type="string">
+  Regular expression that redacts sensitive data by parameter key name in attack reports.
+
+  **Env:** `DD_APPSEC_OBFUSCATION_PARAMETER_KEY_REGEXP`
+</ParamField>
+
+<ParamField body="appsec.obfuscatorValueRegex" type="string">
+  Regular expression that redacts sensitive data by parameter value in attack reports.
+
+  **Env:** `DD_APPSEC_OBFUSCATION_PARAMETER_VALUE_REGEXP`
+</ParamField>
+
+<ParamField body="appsec.blockedTemplateHtml" type="string">
+  Path to a custom HTML template returned when a request is blocked.
+
+  **Env:** `DD_APPSEC_HTTP_BLOCKED_TEMPLATE_HTML`
+</ParamField>
+
+<ParamField body="appsec.blockedTemplateJson" type="string">
+  Path to a custom JSON template returned when a request is blocked.
+
+  **Env:** `DD_APPSEC_HTTP_BLOCKED_TEMPLATE_JSON`
+</ParamField>
+
+<ParamField body="appsec.blockedTemplateGraphql" type="string">
+  Path to a custom JSON template returned when a GraphQL request is blocked.
+
+  **Env:** `DD_APPSEC_GRAPHQL_BLOCKED_TEMPLATE_JSON`
+</ParamField>
+
+<ParamField body="appsec.eventTracking.mode" type="string" default="identification">
+  Automated user event tracking mode. Controls how user identifiers are collected.
+
+  - `identification` (or `ident`) — collect user IDs and logins as-is
+  - `anonymous` (or `anon`) — hash user IDs and logins before collecting
+  - `disabled` — do not collect user IDs or logins
+
+  **Env:** `DD_APPSEC_AUTO_USER_INSTRUMENTATION_MODE`
+</ParamField>
+
+<ParamField body="appsec.apiSecurity.enabled" type="boolean" default="true">
+  Enable API Security schema collection.
+
+  **Env:** `DD_API_SECURITY_ENABLED`
+</ParamField>
+
+<ParamField body="appsec.rasp.enabled" type="boolean" default="true">
+  Enable Runtime Application Self-Protection (RASP).
+
+  **Env:** `DD_APPSEC_RASP_ENABLED`
+</ParamField>
+
+<ParamField body="appsec.stackTrace.enabled" type="boolean" default="true">
+  Enable stack trace collection for attack reports.
+
+  **Env:** `DD_APPSEC_STACK_TRACE_ENABLED`
+</ParamField>
+
+<ParamField body="appsec.stackTrace.maxStackTraces" type="number" default="2">
+  Maximum number of stack traces to include in a single attack report.
+
+  **Env:** `DD_APPSEC_MAX_STACK_TRACES`
+</ParamField>
+
+<ParamField body="appsec.stackTrace.maxDepth" type="number" default="32">
+  Maximum frame depth for each reported stack trace.
+
+  **Env:** `DD_APPSEC_MAX_STACK_TRACE_DEPTH`
+</ParamField>
+
+---
+
+## IAST
+
+Pass `iast: true` as shorthand, or provide an object for fine-grained control.
+
+<ParamField body="iast.enabled" type="boolean" default="false">
+  Enable Interactive Application Security Testing (IAST) vulnerability detection.
+
+  **Env:** `DD_IAST_ENABLED`
+</ParamField>
+
+<ParamField body="iast.requestSampling" type="number" default="30">
+  Percentage of requests IAST analyzes for vulnerabilities (0–100).
+
+  **Env:** `DD_IAST_REQUEST_SAMPLING`
+</ParamField>
+
+<ParamField body="iast.maxConcurrentRequests" type="number" default="2">
+  Maximum number of requests being analyzed for code vulnerabilities at the same time.
+
+  **Env:** `DD_IAST_MAX_CONCURRENT_REQUESTS`
+</ParamField>
+
+<ParamField body="iast.maxContextOperations" type="number" default="2">
+  Maximum number of vulnerability detections per request context.
+
+  **Env:** `DD_IAST_MAX_CONTEXT_OPERATIONS`
+</ParamField>
+
+<ParamField body="iast.deduplicationEnabled" type="boolean">
+  Deduplicate identical vulnerabilities so each unique finding is reported only once.
+
+  **Env:** `DD_IAST_DEDUPLICATION_ENABLED`
+</ParamField>
+
+<ParamField body="iast.redactionEnabled" type="boolean" default="true">
+  Redact sensitive data in vulnerability reports.
+
+  **Env:** `DD_IAST_REDACTION_ENABLED`
+</ParamField>
+
+---
+
+## LLM Observability
+
+<Note>
+  `DD_LLMOBS_ENABLED` takes precedence over the programmatic `llmobs.enabled` option.
+</Note>
+
+<ParamField body="llmobs.mlApp" type="string">
+  The name of your ML application. Used to group LLM traces in the Datadog UI.
+
+  **Env:** `DD_LLMOBS_ML_APP`
+</ParamField>
+
+<ParamField body="llmobs.agentlessEnabled" type="boolean">
+  Set to `true` to send LLM Observability data directly to Datadog without a local Agent.
+
+  **Env:** `DD_LLMOBS_AGENTLESS_ENABLED`
+</ParamField>
+
+---
+
+## Dynamic Instrumentation
+
+<ParamField body="dynamicInstrumentation.enabled" type="boolean" default="false">
+  Enable Dynamic Instrumentation (live debugging without redeployment).
+
+  **Env:** `DD_DYNAMIC_INSTRUMENTATION_ENABLED`
+</ParamField>
+
+<ParamField body="dynamicInstrumentation.probeFile" type="string">
+  Path to a local probe configuration file.
+
+  **Env:** `DD_DYNAMIC_INSTRUMENTATION_PROBE_FILE`
+</ParamField>
+
+<ParamField body="dynamicInstrumentation.captureTimeoutMs" type="number" default="15">
+  Timeout in milliseconds for capturing variable values when a probe fires.
+
+  **Env:** `DD_DYNAMIC_INSTRUMENTATION_CAPTURE_TIMEOUT_MS`
+</ParamField>
+
+<ParamField body="dynamicInstrumentation.uploadIntervalSeconds" type="number" default="1">
+  Interval in seconds between probe data uploads.
+
+  **Env:** `DD_DYNAMIC_INSTRUMENTATION_UPLOAD_INTERVAL_SECONDS`
+</ParamField>
+
+<ParamField body="dynamicInstrumentation.redactedIdentifiers" type="string[]" default="[]">
+  Additional identifier names to redact in captured data. These extend the built-in redaction list.
+
+  **Env:** `DD_DYNAMIC_INSTRUMENTATION_REDACTED_IDENTIFIERS`
+</ParamField>
+
+<ParamField body="dynamicInstrumentation.redactionExcludedIdentifiers" type="string[]" default="[]">
+  Identifier names to exclude from the built-in redaction list.
+
+  **Env:** `DD_DYNAMIC_INSTRUMENTATION_REDACTION_EXCLUDED_IDENTIFIERS`
+</ParamField>
+
+---
+
+## Remote Configuration
+
+<ParamField body="remoteConfig.pollInterval" type="number" default="5">
+  Remote configuration polling interval in seconds.
+
+  **Env:** `DD_REMOTE_CONFIG_POLL_INTERVAL_SECONDS`
+</ParamField>
+
+---
+
+## Advanced
+
+<ParamField body="logger" type="object">
+  Custom logger for the tracer. Must implement `error(err)`, `warn(message)`, `info(message)`, and `debug(message)` methods.
+
+  ```javascript
+  logger: {
+    error: (err) => console.error(err),
+    warn: (msg) => console.warn(msg),
+    info: (msg) => console.info(msg),
+    debug: (msg) => console.debug(msg),
+  }
+  ```
+</ParamField>
+
+<ParamField body="logLevel" type="string" default="debug">
+  Minimum log level emitted by the tracer when debug logging is enabled. Accepted values: `debug`, `info`, `warn`, `error`.
+
+  **Env:** `DD_TRACE_LOG_LEVEL`, `OTEL_LOG_LEVEL`
+</ParamField>
+
+<ParamField body="lookup" type="function">
+  Custom DNS lookup function used when connecting to the agent. Receives the same arguments as `dns.lookup()`. Defaults to the standard `dns.lookup()`.
+</ParamField>
+
+<ParamField body="protocolVersion" type="string" default="0.4">
+  Agent protocol version. Must be supported by the installed agent version; mismatches cause all traces to be dropped.
+
+  **Env:** `DD_TRACE_AGENT_PROTOCOL_VERSION`
+</ParamField>
+
+<ParamField body="dogstatsd.hostname" type="string" default="localhost">
+  Hostname of the DogStatsD agent used for runtime metrics.
+
+  **Env:** `DD_DOGSTATSD_HOST`
+</ParamField>
+
+<ParamField body="dogstatsd.port" type="number" default="8125">
+  Port of the DogStatsD agent.
+
+  **Env:** `DD_DOGSTATSD_PORT`
+</ParamField>
+
+<ParamField body="cloudPayloadTagging.request" type="string">
+  JSONPath query selecting fields to tag from cloud service request payloads. Undefined or invalid queries disable request tagging.
+
+  **Env:** `DD_TRACE_CLOUD_REQUEST_PAYLOAD_TAGGING`
+</ParamField>
+
+<ParamField body="cloudPayloadTagging.response" type="string">
+  JSONPath query selecting fields to tag from cloud service response payloads.
+
+  **Env:** `DD_TRACE_CLOUD_RESPONSE_PAYLOAD_TAGGING`
+</ParamField>
+
+<ParamField body="cloudPayloadTagging.maxDepth" type="number" default="10">
+  Maximum depth for payload traversal when extracting tags.
+
+  **Env:** `DD_TRACE_CLOUD_PAYLOAD_TAGGING_MAX_DEPTH`
+</ParamField>

@@ -1,0 +1,256 @@
+---
+title: "Custom Instrumentation"
+description: "Manually create and manage spans to capture operations that dd-trace doesn't instrument automatically."
+---
+
+Automatic instrumentation covers most popular libraries and frameworks out of the box. Use custom instrumentation when you need to:
+
+- Trace internal business logic (e.g. a payment processing pipeline)
+- Measure a code path inside a library that isn't auto-instrumented
+- Add custom tags or error information to an existing span
+- Create a root span for a background job or queue consumer
+
+## tracer.trace()
+
+`tracer.trace(name, [options], fn)` creates a span, activates it on the current scope, and finishes it automatically based on how `fn` behaves.
+
+The span finishes when one of these conditions is met:
+
+- `fn` returns a promise — the span finishes when the promise resolves or rejects.
+- `fn` accepts a second argument — dd-trace passes a `done` callback; the span finishes when you call `done(err?)`.
+- Neither of the above — the span finishes synchronously at the end of `fn`.
+
+### Synchronous
+
+```javascript
+const tracer = require('dd-trace').init()
+
+function computeTotal(items) {
+  return tracer.trace('shop.compute_total', (span) => {
+    span.setTag('item.count', items.length)
+    return items.reduce((sum, item) => sum + item.price, 0)
+  })
+}
+```
+
+If `fn` throws, dd-trace tags the span with the error and re-throws.
+
+### Callback (async with done)
+
+```javascript
+function fetchUser(id, callback) {
+  tracer.trace('db.find_user', (span, done) => {
+    db.query('SELECT * FROM users WHERE id = ?', [id], (err, result) => {
+      done(err) // tags error and finishes span
+      callback(err, result)
+    })
+  })
+}
+```
+
+### Promise / async–await
+
+```javascript
+async function processOrder(orderId) {
+  return tracer.trace('order.process', async (span) => {
+    span.setTag('order.id', orderId)
+    const order = await db.orders.findById(orderId)
+    await notifyFulfillment(order)
+    return order
+  })
+}
+```
+
+### Trace options
+
+The optional `options` object accepts:
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `service` | `string` | Override the service name for this span |
+| `resource` | `string` | Set the resource name (e.g. route or SQL query) |
+| `type` | `string` | Span type (e.g. `'web'`, `'db'`, `'cache'`) |
+| `childOf` | `Span \| SpanContext \| null` | Explicit parent span. Pass `null` to force a new root span |
+| `tags` | `object` | Key-value tags to set on creation |
+| `links` | `array` | Span links — see [Span links](#span-links) below |
+
+```javascript
+tracer.trace('http.request', {
+  service: 'payments-service',
+  resource: 'POST /charge',
+  type: 'web',
+  tags: { 'customer.tier': 'premium' },
+}, (span) => {
+  // ...
+})
+```
+
+## tracer.wrap()
+
+`tracer.wrap(name, [options], fn)` returns a new function that automatically calls `tracer.trace()` each time it's invoked. Use this to patch an existing function definition without restructuring call sites.
+
+```javascript
+const tracer = require('dd-trace').init()
+
+// Original function
+function handle(req, res) {
+  // ...
+}
+
+// Wrapped version — every call creates a traced span
+const tracedHandle = tracer.wrap('web.request', handle)
+```
+
+Callback detection follows the same rules as `tracer.trace()`, except: if the last argument of the wrapped function is itself a function, dd-trace treats it as a Node-style callback and finishes the span when that callback is called.
+
+```javascript
+function fetchData(key, callback) {
+  // last arg is a callback — span finishes when callback fires
+  redis.get(key, callback)
+}
+
+const tracedFetch = tracer.wrap('cache.get', fetchData)
+```
+
+You can also pass a function as `options` to compute options dynamically from the wrapped function's arguments:
+
+```javascript
+const tracedFetch = tracer.wrap(
+  'cache.get',
+  (...args) => ({ resource: args[0] }), // args[0] is the cache key
+  fetchData
+)
+```
+
+## tracer.startSpan()
+
+`tracer.startSpan(name, [options])` gives you full manual control. Unlike `tracer.trace()`, it does **not** activate the span or finish it for you — you must call `span.finish()` yourself.
+
+<Warning>
+Always call `span.finish()`, even on error paths. Unfinished spans are dropped and never sent to the agent.
+</Warning>
+
+```javascript
+const tracer = require('dd-trace').init()
+
+const span = tracer.startSpan('batch.process', {
+  childOf: tracer.scope().active(), // explicitly set parent
+  tags: { 'batch.size': items.length },
+})
+
+try {
+  processBatch(items)
+  span.finish()
+} catch (err) {
+  span.setTag('error', err)
+  span.finish()
+  throw err
+}
+```
+
+For long-lived spans that need to outlive the current async context, use `tracer.scope().activate()` to make the span active in a specific code block.
+
+## Setting tags
+
+Tags are key-value metadata attached to a span. You can set them at creation time (via the `tags` option) or any time before `span.finish()`.
+
+```javascript
+span.setTag('user.id', userId)
+span.setTag('http.status_code', 200)
+
+// Set multiple tags at once
+span.addTags({
+   'db.type': 'postgres',
+   'db.instance': 'main',
+})
+```
+
+### Error tags
+
+To mark a span as an error, set the standard error tags. When you use `tracer.trace()` with a callback or a rejected promise, dd-trace sets these automatically — but if you're using `startSpan()` you must set them yourself.
+
+```javascript
+const { ERROR_TYPE, ERROR_MESSAGE, ERROR_STACK } = require('dd-trace/ext/tags')
+
+try {
+  riskyOperation()
+} catch (err) {
+  span.addTags({
+    [ERROR_TYPE]: err.name,
+    [ERROR_MESSAGE]: err.message,
+    [ERROR_STACK]: err.stack,
+  })
+  span.finish()
+  throw err
+}
+```
+
+Alternatively, pass the error object directly to `setTag('error', err)`:
+
+```javascript
+span.setTag('error', err)
+```
+
+## Scope and active span
+
+dd-trace maintains an _async-local_ scope so child operations can automatically find their parent span without you passing it around explicitly.
+
+### Getting the active span
+
+```javascript
+const span = tracer.scope().active() // returns null if no span is active
+```
+
+### Activating a span manually
+
+Use `tracer.scope().activate(span, fn)` to make a span active inside a specific function. Any async work (timers, promises, callbacks) started within `fn` will also see the span as active.
+
+```javascript
+const tracer = require('dd-trace').init()
+const scope = tracer.scope()
+
+const requestSpan = tracer.startSpan('web.request')
+
+scope.activate(requestSpan, () => {
+  // requestSpan is active here
+  console.log(scope.active()) // requestSpan
+
+  setTimeout(() => {
+    console.log(scope.active()) // still requestSpan
+  }, 100)
+})
+
+console.log(scope.active()) // null — outside the activated scope
+```
+
+<Note>
+`tracer.trace()` calls `scope.activate()` for you. You only need to call it directly when you manage span lifecycle with `startSpan()` or when you need to bridge a scope gap (e.g. an internal task queue that loses context).
+</Note>
+
+## Span links
+
+Span links let you associate spans causally without making one the parent of the other. This is useful for batch processing, fan-out patterns, or linking an async job back to the request that enqueued it.
+
+### At span creation
+
+```javascript
+const producerSpan = tracer.startSpan('queue.publish')
+producerSpan.finish()
+
+// Later, when processing the message:
+const consumerSpan = tracer.startSpan('queue.process', {
+  links: [{ context: producerSpan.context() }],
+})
+```
+
+### After creation
+
+```javascript
+const span = tracer.startSpan('batch.item')
+span.addLink({ context: sourceSpan.context(), attributes: { 'link.name': 'source' } })
+span.finish()
+```
+
+<Note>
+Span links added after creation do not affect the sampling decision. Add links at span creation if they need to influence sampling.
+</Note>

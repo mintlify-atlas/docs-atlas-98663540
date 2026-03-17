@@ -1,0 +1,238 @@
+---
+title: "AI Guard API"
+description: "The tracer.aiguard object evaluates AI conversation threads for security threats, prompt injection, and sensitive data."
+---
+
+AI Guard evaluates conversation messages against security policies before they reach your LLM or after responses are returned. Enable it with your Datadog API and application keys:
+
+```bash
+DD_AI_GUARD_ENABLED=true \
+DD_API_KEY=<your-api-key> \
+DD_APP_KEY=<your-app-key> \
+node app.js
+```
+
+Or configure it programmatically:
+
+```javascript
+const tracer = require('dd-trace').init({
+  experimental: {
+    aiguard: {
+      enabled: true,
+    },
+  },
+})
+```
+
+<Note>
+  AI Guard requires both `DD_API_KEY` and `DD_APP_KEY` to be set. If either is missing, the SDK logs an error and operates as a no-op.
+</Note>
+
+---
+
+## evaluate
+
+Evaluates a conversation thread against AI Guard security policies.
+
+```typescript
+evaluate(
+  messages: Message[],
+  opts?: { block?: boolean }
+): Promise<Evaluation>
+```
+
+<ParamField path="messages" type="Message[]" required>
+  The conversation messages to evaluate. Each message is one of the following types:
+
+  <Expandable title="TextMessage">
+    <ParamField path="role" type="string" required>
+      The role of the message sender (e.g. `'system'`, `'user'`, `'assistant'`).
+    </ParamField>
+    <ParamField path="content" type="string" required>
+      The textual content of the message.
+    </ParamField>
+  </Expandable>
+
+  <Expandable title="AssistantTextMessage">
+    <ParamField path="role" type="'assistant'" required>
+      Always `'assistant'`.
+    </ParamField>
+    <ParamField path="content" type="string" required>
+      The assistant's text response.
+    </ParamField>
+  </Expandable>
+
+  <Expandable title="AssistantToolCallMessage">
+    <ParamField path="role" type="'assistant'" required>
+      Always `'assistant'`.
+    </ParamField>
+    <ParamField path="tool_calls" type="ToolCall[]" required>
+      Array of tool calls the assistant wants to execute.
+      <Expandable title="ToolCall">
+        <ParamField path="id" type="string" required>
+          Unique identifier for this tool call instance.
+        </ParamField>
+        <ParamField path="function.name" type="string" required>
+          The name of the tool/function to call.
+        </ParamField>
+        <ParamField path="function.arguments" type="string" required>
+          A string containing the arguments to pass to the tool.
+        </ParamField>
+      </Expandable>
+    </ParamField>
+  </Expandable>
+
+  <Expandable title="ToolMessage">
+    <ParamField path="role" type="'tool'" required>
+      Always `'tool'`.
+    </ParamField>
+    <ParamField path="tool_call_id" type="string" required>
+      The ID of the `ToolCall` this message is responding to.
+    </ParamField>
+    <ParamField path="content" type="string" required>
+      The output returned by the tool execution.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="opts" type="object">
+  Optional configuration.
+
+  <Expandable title="opts">
+    <ParamField path="block" type="boolean" default="false">
+      When `true`, throws an `AIGuardAbortError` if the evaluation result is not `'ALLOW'` and the AI Guard service has blocking mode enabled.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ResponseField name="returns" type="Promise<Evaluation>">
+  Resolves with an `Evaluation` containing the security decision.
+
+  <Expandable title="Evaluation">
+    <ResponseField name="action" type="'ALLOW' | 'DENY' | 'ABORT'">
+      The security action determined by AI Guard:
+      - `ALLOW`: The conversation is safe to proceed.
+      - `DENY`: The current exchange should be blocked.
+      - `ABORT`: The full workflow should be terminated immediately.
+    </ResponseField>
+    <ResponseField name="reason" type="string">
+      Human-readable explanation for the action.
+    </ResponseField>
+    <ResponseField name="tags" type="string[]">
+      Tags associated with the evaluation (e.g. `'indirect-prompt-injection'`).
+    </ResponseField>
+    <ResponseField name="sds" type="Object[]">
+      Sensitive Data Scanner findings from the evaluation.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+The promise rejects with `AIGuardAbortError` when `opts.block` is `true` and the evaluation result would block the request. It rejects with `AIGuardClientError` when communication with the AI Guard service fails.
+
+<CodeGroup>
+
+```javascript Basic evaluation
+const tracer = require('dd-trace').init()
+
+async function handleChat(messages) {
+  const evaluation = await tracer.aiguard.evaluate(messages)
+
+  if (evaluation.action !== 'ALLOW') {
+    return { blocked: true, reason: evaluation.reason }
+  }
+
+  const response = await callLLM(messages)
+  return { blocked: false, response }
+}
+```
+
+```javascript With blocking
+const tracer = require('dd-trace').init()
+
+async function handleChat(messages) {
+  try {
+    // Throws AIGuardAbortError if action is not ALLOW and blocking is enabled
+    await tracer.aiguard.evaluate(messages, { block: true })
+  } catch (err) {
+    if (err.name === 'AIGuardAbortError') {
+      return res.status(403).json({ error: err.reason })
+    }
+    // AIGuardClientError — AI Guard service unavailable
+    console.error('AI Guard error:', err)
+  }
+
+  const response = await callLLM(messages)
+  return { response }
+}
+```
+
+```javascript Agentic workflow
+const tracer = require('dd-trace').init()
+
+async function runAgent(userMessage) {
+  const messages = [
+    { role: 'system', content: 'You are a helpful assistant.' },
+    { role: 'user', content: userMessage },
+  ]
+
+  // Evaluate user input
+  const inputEval = await tracer.aiguard.evaluate(messages)
+  if (inputEval.action !== 'ALLOW') {
+    return { blocked: true, reason: inputEval.reason }
+  }
+
+  const response = await callLLM(messages)
+  messages.push(response.message)
+
+  // Evaluate model output
+  const outputEval = await tracer.aiguard.evaluate(messages)
+  if (outputEval.action !== 'ALLOW') {
+    return { blocked: true, reason: outputEval.reason }
+  }
+
+  return { blocked: false, content: response.message.content }
+}
+```
+
+</CodeGroup>
+
+---
+
+## Configuration
+
+Configure AI Guard under `tracer.init({ experimental: { aiguard: { ... } } })` or via environment variables:
+
+| Option | Env var | Default | Description |
+|--------|---------|---------|-------------|
+| `enabled` | `DD_AI_GUARD_ENABLED` | `false` | Enable the AI Guard SDK. |
+| `endpoint` | `DD_AI_GUARD_ENDPOINT` | `https://app.<DD_SITE>/api/v2/ai-guard` | URL of the AI Guard REST API. |
+| `timeout` | `DD_AI_GUARD_TIMEOUT` | `5000` | Timeout in milliseconds for API calls. |
+| `maxMessagesLength` | `DD_AI_GUARD_MAX_MESSAGES_LENGTH` | — | Maximum number of conversational messages included in the meta-struct. |
+| `maxContentSize` | `DD_AI_GUARD_MAX_CONTENT_SIZE` | — | Maximum size of the `content` field in the meta-struct. |
+
+---
+
+## Error types
+
+### AIGuardAbortError
+
+Thrown when `opts.block` is `true` and AI Guard determines the conversation should be blocked.
+
+```typescript
+interface AIGuardAbortError extends Error {
+  reason: string;  // explanation from AI Guard
+  tags: string[];  // evaluation tags
+  sds: Object[];   // Sensitive Data Scanner findings
+}
+```
+
+### AIGuardClientError
+
+Thrown when communication with the AI Guard service fails (network timeout, connection error, unexpected response).
+
+```typescript
+interface AIGuardClientError extends Error {
+  errors?: unknown[]; // JSON:API error objects from the API response
+  cause?: Error;      // underlying network or parsing error
+}
+```

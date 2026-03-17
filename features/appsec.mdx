@@ -1,0 +1,234 @@
+---
+title: "Application Security (AppSec)"
+description: "Detect and block web application attacks in real time using the Datadog WAF, IAST, and RASP capabilities built into dd-trace."
+keywords: ["appsec", "application security", "WAF", "IAST", "RASP", "attack detection", "blocking", "dd-trace"]
+---
+
+Application Security (AppSec) protects your Node.js services against web attacks at runtime. It integrates directly with `dd-trace` so you get protection without installing a separate agent or proxy.
+
+AppSec provides three complementary layers of security:
+
+- **WAF (Web Application Firewall)**: inspects incoming HTTP requests against Datadog-managed and custom rules to detect and block known attack patterns such as SQL injection, command injection, and SSRF.
+- **IAST (Interactive Application Security Testing)**: taint-tracks data as it flows through your code to identify vulnerabilities such as weak hashing, insecure cookies, and unvalidated redirects.
+- **RASP (Runtime Application Self-Protection)**: intercepts dangerous operations — file reads, command executions, database queries — at the point they are executed and blocks them if the input originates from a tainted source.
+
+## Enable AppSec
+
+<Steps>
+  <Step title="Set the environment variable or init option">
+    The simplest way to enable AppSec is with an environment variable:
+
+    ```bash
+    DD_APPSEC_ENABLED=true node server.js
+    ```
+
+    You can also pass `appsec: true` to `tracer.init()`:
+
+    ```javascript
+    const tracer = require('dd-trace').init({
+      appsec: true,
+    })
+    ```
+  </Step>
+
+  <Step title="(Optional) Enable RASP">
+    RASP is disabled by default. Enable it alongside AppSec:
+
+    ```bash
+    DD_APPSEC_ENABLED=true \
+    DD_APPSEC_RASP_ENABLED=true \
+    node server.js
+    ```
+
+    Or in code:
+
+    ```javascript
+    const tracer = require('dd-trace').init({
+      appsec: {
+        enabled: true,
+        rasp: { enabled: true },
+      },
+    })
+    ```
+  </Step>
+
+  <Step title="Verify in Datadog">
+    Make a few requests to your service, then open [Datadog Security → Application Security](https://app.datadoghq.com/security/appsec) to confirm your service appears.
+  </Step>
+</Steps>
+
+<Warning>
+  Initialize `dd-trace` before any other `require` or `import` statements. AppSec patches framework and library modules at load time — if a module loads before the tracer starts, it will not be protected.
+</Warning>
+
+## Configuration options
+
+All options live under the `appsec` key in `tracer.init()`. You can also pass `appsec: true` as a shorthand to enable with defaults.
+
+<ParamField path="appsec.enabled" type="boolean" default="false">
+  Whether to enable AppSec. Environment variable: `DD_APPSEC_ENABLED`.
+</ParamField>
+
+<ParamField path="appsec.rules" type="string">
+  Path to a custom WAF rules file (JSON). Overrides the Datadog-managed rules. Environment variable: `DD_APPSEC_RULES`.
+</ParamField>
+
+<ParamField path="appsec.rateLimit" type="number" default="100">
+  Maximum number of attack traces sampled per second. Environment variable: `DD_APPSEC_TRACE_RATE_LIMIT`.
+</ParamField>
+
+<ParamField path="appsec.wafTimeout" type="number" default="5000">
+  Maximum time in microseconds the WAF is allowed to run synchronously per request. Environment variable: `DD_APPSEC_WAF_TIMEOUT`.
+</ParamField>
+
+<ParamField path="appsec.obfuscatorKeyRegex" type="string">
+  Regular expression that matches parameter names whose values should be redacted in attack reports. Environment variable: `DD_APPSEC_OBFUSCATION_PARAMETER_KEY_REGEXP`.
+</ParamField>
+
+<ParamField path="appsec.obfuscatorValueRegex" type="string">
+  Regular expression that matches parameter values that should be redacted in attack reports. Environment variable: `DD_APPSEC_OBFUSCATION_PARAMETER_VALUE_REGEXP`.
+</ParamField>
+
+<ParamField path="appsec.blockedTemplateHtml" type="string">
+  Path to a custom HTML file returned to browsers when a request is blocked. Environment variable: `DD_APPSEC_HTTP_BLOCKED_TEMPLATE_HTML`.
+</ParamField>
+
+<ParamField path="appsec.blockedTemplateJson" type="string">
+  Path to a custom JSON file returned to API clients when a request is blocked. Environment variable: `DD_APPSEC_HTTP_BLOCKED_TEMPLATE_JSON`.
+</ParamField>
+
+<ParamField path="appsec.eventTracking.mode" type="string" default="'identification'">
+  Controls how user identifiers are collected in login events. Accepts:
+  - `'identification'` (or `'ident'`): collects user IDs and logins without redaction.
+  - `'anonymous'` (or `'anon'`): hashes user IDs and logins before collecting them.
+  - `'disabled'`: does not collect user IDs or logins.
+
+  Environment variable: `DD_APPSEC_AUTO_USER_INSTRUMENTATION_MODE`.
+</ParamField>
+
+<ParamField path="appsec.rasp.enabled" type="boolean" default="false">
+  Whether to enable RASP. Environment variable: `DD_APPSEC_RASP_ENABLED`.
+</ParamField>
+
+<ParamField path="appsec.apiSecurity.enabled" type="boolean" default="true">
+  Whether to enable API Security schema extraction. Environment variable: `DD_API_SECURITY_ENABLED`.
+</ParamField>
+
+## User tracking
+
+AppSec can link security events to authenticated users so you can detect credential stuffing, account takeover, and automated login attacks.
+
+### Link a user to the current trace
+
+Call `tracer.appsec.setUser()` after a successful authentication to associate a user with the current trace:
+
+```javascript
+const tracer = require('dd-trace')
+
+app.post('/login', async (req, res) => {
+  const user = await authenticate(req.body)
+
+  tracer.appsec.setUser({
+    id: user.id,          // required
+    email: user.email,    // optional
+    name: user.name,      // optional
+    role: user.role,      // optional
+  })
+
+  res.json({ token: user.token })
+})
+```
+
+The `User` interface accepts any additional string fields as custom attributes.
+
+### Track login success
+
+```javascript
+const tracer = require('dd-trace')
+
+app.post('/login', async (req, res) => {
+  const user = await authenticate(req.body)
+
+  tracer.appsec.trackUserLoginSuccessEvent(
+    { id: user.id, email: user.email },
+    { authMethod: 'password' }  // optional metadata
+  )
+
+  res.json({ token: user.token })
+})
+```
+
+### Track login failure
+
+```javascript
+const tracer = require('dd-trace')
+
+app.post('/login', async (req, res) => {
+  const { userId, exists } = await checkLogin(req.body)
+
+  tracer.appsec.trackUserLoginFailureEvent(
+    userId,
+    exists,   // true if the user ID exists but the password was wrong
+    { attemptCount: req.body.attemptCount }  // optional metadata
+  )
+
+  res.status(401).json({ error: 'Invalid credentials' })
+})
+```
+
+### Check whether a user should be blocked
+
+After authentication, you can ask AppSec whether the user is on a blocklist:
+
+```javascript
+const tracer = require('dd-trace')
+
+app.post('/login', async (req, res) => {
+  const user = await authenticate(req.body)
+
+  if (tracer.appsec.isUserBlocked({ id: user.id })) {
+    tracer.appsec.blockRequest(req, res)
+    return  // stop processing — blockRequest ends the response
+  }
+
+  res.json({ token: user.token })
+})
+```
+
+<Warning>
+  Stop processing the request immediately after calling `tracer.appsec.blockRequest()`. The function ends the HTTP response, but your application code will continue executing unless you return early.
+</Warning>
+
+## Custom business logic events
+
+Use `tracer.appsec.trackCustomEvent()` to flag application-level events — for example, suspicious payment patterns or high-frequency API usage — so they appear in Datadog Security:
+
+```javascript
+const tracer = require('dd-trace')
+
+app.post('/checkout', async (req, res) => {
+  if (orderTotal > LARGE_ORDER_THRESHOLD) {
+    tracer.appsec.trackCustomEvent('large-order-detected', {
+      orderId: order.id,
+      total: String(orderTotal),
+    })
+  }
+
+  res.json({ orderId: order.id })
+})
+```
+
+## API Security
+
+When `appsec.apiSecurity.enabled` is `true` (the default), dd-trace extracts JSON schema descriptions of request and response bodies from sampled traffic and reports them to Datadog. This lets Datadog build an API inventory and detect schema anomalies without any code changes.
+
+Schema extraction runs on a sample of requests, so it has negligible performance impact. You can disable it for a single service:
+
+```javascript
+const tracer = require('dd-trace').init({
+  appsec: {
+    enabled: true,
+    apiSecurity: { enabled: false },
+  },
+})
+```

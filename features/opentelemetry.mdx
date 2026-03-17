@@ -1,0 +1,187 @@
+---
+title: "OpenTelemetry Compatibility"
+description: "Use the OpenTelemetry API with dd-trace so you can write vendor-neutral instrumentation code that sends data to the Datadog backend."
+keywords: ["OpenTelemetry", "OTel", "TracerProvider", "context propagation", "dd-trace", "interoperability"]
+---
+
+dd-trace implements the OpenTelemetry (OTel) tracing API so you can write instrumentation code against the OTel interface while sending data to the Datadog backend. This lets you use OTel-compatible libraries and SDKs alongside — or instead of — the native `dd-trace` API.
+
+<Note>
+  dd-trace's OTel compatibility covers **traces only**. Metrics and logs emitted via the OTel SDK are not forwarded to Datadog through this integration. Use `dd-trace` native APIs or the Datadog Agent OTLP intake for metrics and logs.
+</Note>
+
+## How it works
+
+dd-trace ships a `TracerProvider` class that implements the OTel `TracerProvider` interface. When you register it as the global OTel provider, all OTel API calls (`trace.getTracer()`, `tracer.startSpan()`, etc.) create Datadog spans that are exported through the normal `dd-trace` pipeline — no separate OTel collector or exporter is needed.
+
+Spans created through the OTel API and spans created through the `dd-trace` API share the same context propagation and trace format, so they appear together in a single Datadog trace.
+
+## Setup
+
+<Steps>
+  <Step title="Install the OTel API package">
+    `dd-trace` depends on `@opentelemetry/api` but does not bundle it. Install the API package in your application:
+
+    <CodeGroup>
+
+    ```bash npm
+    npm install @opentelemetry/api
+    ```
+
+    ```bash yarn
+    yarn add @opentelemetry/api
+    ```
+
+    </CodeGroup>
+  </Step>
+
+  <Step title="Initialize dd-trace first">
+    `dd-trace` must be initialized before any other code imports `@opentelemetry/api`:
+
+    ```javascript tracer.js
+    // tracer.js — must be required before everything else
+    const tracer = require('dd-trace').init({
+      service: 'my-node-app',
+      env: 'production',
+    })
+    module.exports = tracer
+    ```
+  </Step>
+
+  <Step title="Register the TracerProvider">
+    Get the `TracerProvider` from the initialized tracer and register it as the global OTel provider:
+
+    ```javascript
+    require('./tracer')  // initialize dd-trace first
+
+    const { trace, context } = require('@opentelemetry/api')
+    const tracer = require('dd-trace')
+
+    // Register dd-trace's TracerProvider as the global OTel provider.
+    const provider = new tracer.TracerProvider()
+    provider.register()
+
+    // Now the OTel API uses dd-trace under the hood.
+    const otelTracer = trace.getTracer('my-service', '1.0.0')
+    ```
+
+    Calling `provider.register()` also sets the global OTel context manager and a W3C Trace Context propagator. You can override the propagator:
+
+    ```javascript
+    const { B3Propagator } = require('@opentelemetry/propagator-b3')
+    provider.register({ propagator: new B3Propagator() })
+    ```
+  </Step>
+</Steps>
+
+## Create spans with the OTel API
+
+Once the provider is registered, use the standard OTel API to create spans:
+
+```javascript
+const { trace, SpanStatusCode } = require('@opentelemetry/api')
+
+const otelTracer = trace.getTracer('my-service')
+
+async function processOrder(orderId) {
+  const span = otelTracer.startSpan('process-order', {
+    attributes: {
+      'order.id': orderId,
+      'order.source': 'web',
+    },
+  })
+
+  try {
+    const result = await doWork(orderId)
+    span.setStatus({ code: SpanStatusCode.OK })
+    return result
+  } catch (err) {
+    span.setStatus({ code: SpanStatusCode.ERROR, message: err.message })
+    span.recordException(err)
+    throw err
+  } finally {
+    span.end()
+  }
+}
+```
+
+For automatic context propagation through async operations, wrap your work in `context.with()`:
+
+```javascript
+const { trace, context } = require('@opentelemetry/api')
+
+const otelTracer = trace.getTracer('my-service')
+
+const span = otelTracer.startSpan('parent')
+const ctx = trace.setSpan(context.active(), span)
+
+context.with(ctx, () => {
+  // Spans started here will be children of `span`.
+  const child = otelTracer.startSpan('child')
+  child.end()
+})
+
+span.end()
+```
+
+## Mix OTel and dd-trace APIs
+
+You can use both APIs in the same process. Spans from both are part of the same trace:
+
+```javascript
+const tracer = require('dd-trace')
+const { trace } = require('@opentelemetry/api')
+
+const otelTracer = trace.getTracer('my-service')
+
+// dd-trace span as the root
+tracer.trace('http.request', (ddSpan) => {
+  // OTel child span — picks up the active context from the dd-trace span
+  const otelSpan = otelTracer.startSpan('downstream-call')
+  otelSpan.setAttribute('http.method', 'GET')
+  otelSpan.end()
+})
+```
+
+## Context propagation interoperability
+
+dd-trace and the OTel API share the same in-process context store. A span started with `dd-trace` is visible as the active OTel span, and vice versa. Both use the same W3C `traceparent` header for outbound HTTP requests.
+
+This means:
+
+- Existing `dd-trace` auto-instrumented spans (Express, PostgreSQL, Redis, etc.) appear as parent spans for OTel child spans.
+- OTel spans created in incoming-request handlers are automatically attached to the trace that `dd-trace` extracted from the request headers.
+- You do not need to manually bridge context between the two APIs.
+
+## TracerProvider API reference
+
+The `TracerProvider` class is available at `tracer.TracerProvider`:
+
+```typescript
+import tracer from 'dd-trace'
+
+const provider = new tracer.TracerProvider(config?)
+
+// Register as global OTel provider
+provider.register(config?: { propagator?: TextMapPropagator })
+
+// Get an OTel-compatible Tracer
+provider.getTracer(name: string, version?: string, options?: object): Tracer
+
+// Add a span processor (runs in addition to the dd-trace exporter)
+provider.addSpanProcessor(processor: SpanProcessor): void
+
+// Flush pending spans through dd-trace's exporter
+provider.forceFlush(): Promise<void>
+
+// Shut down all span processors
+provider.shutdown(): Promise<void>
+```
+
+## Supported OTel signals
+
+| Signal | Supported | Notes |
+| --- | --- | --- |
+| Traces | Yes | Full support via `TracerProvider`. |
+| Metrics | No | Use `dd-trace` DogStatsD or the Agent OTLP intake instead. |
+| Logs | No | Use Datadog's log management integrations instead. |

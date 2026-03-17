@@ -1,0 +1,123 @@
+---
+title: "ECMAScript Modules (ESM)"
+description: "How to use dd-trace with native ES module applications."
+---
+
+Node.js ES modules (`import`/`export`) have a fundamental constraint: `import` statements are hoisted and evaluated before any code in the file runs. This means the typical CJS pattern of requiring `dd-trace` as the very first line of your entry point doesn't work reliably in ESM — the library you want to instrument may already be loaded before dd-trace gets a chance to patch it.
+
+dd-trace solves this with a loader hook that intercepts module loads at the Node.js level, allowing instrumentation to happen transparently regardless of import ordering.
+
+## Node.js version requirements
+
+| Approach | Minimum Node.js |
+|----------|-----------------|
+| `--import dd-trace/initialize.mjs` | 18.19.0 or 20.6.0+ (recommended) |
+| `--loader dd-trace/esm` | 12.0.0 (legacy, deprecated in Node 20+) |
+| `register.js` programmatic | 20.6.0+ |
+
+## Solution 1: --import flag (recommended)
+
+The `--import` flag runs a module before your application entry point. Use `dd-trace/initialize.mjs` — it both initializes the tracer and registers the ESM loader hook in a single step.
+
+```bash
+node --import dd-trace/initialize.mjs server.mjs
+```
+
+With this approach you do **not** need any `import` or `require` for dd-trace inside your application code. The tracer is initialized automatically with defaults read from environment variables.
+
+<Steps>
+  <Step title="Install dd-trace">
+    ```bash
+    npm install dd-trace
+    ```
+  </Step>
+  <Step title="Set configuration via environment variables">
+    ```bash
+    export DD_SERVICE=my-service
+    export DD_ENV=production
+    export DD_VERSION=1.0.0
+    ```
+  </Step>
+  <Step title="Start your application with the --import flag">
+    ```bash
+    node --import dd-trace/initialize.mjs server.mjs
+    ```
+  </Step>
+</Steps>
+
+To pass the flag via `NODE_OPTIONS` (useful in containers or managed runtimes):
+
+```bash
+NODE_OPTIONS='--import dd-trace/initialize.mjs' node server.mjs
+```
+
+## Solution 2: --loader flag (legacy)
+
+For Node.js versions before 18.19, or when `--import` is not available, use the `--loader` flag:
+
+```bash
+node --loader dd-trace/esm server.mjs
+```
+
+<Warning>
+The `--loader` API is deprecated as of Node.js 20. Prefer `--import dd-trace/initialize.mjs` on supported versions.
+</Warning>
+
+The `initialize.mjs` file is designed to work with both flags — when used as a `--loader` it acts as the loader hook itself; when used as an `--import` it additionally calls `Module.register()` to set up the hook using the newer stable API.
+
+## Solution 3: Programmatic register.js
+
+If you need to register the ESM loader hook programmatically from a CJS setup file (e.g. a custom `--require` script), use `register.js`:
+
+```javascript
+// register.js
+'use strict'
+
+const { register } = require('node:module')
+const { pathToFileURL } = require('node:url')
+
+// Registers the dd-trace ESM loader hook
+register('./loader-hook.mjs', pathToFileURL(__filename))
+```
+
+Then start your application with:
+
+```bash
+node --import ./register.js server.mjs
+```
+
+<Note>
+This approach requires Node.js 20.6.0 or later (where `module.register()` was introduced). The `register.js` file in the dd-trace package itself uses this exact pattern.
+</Note>
+
+## Custom initialization options
+
+When you use `--import dd-trace/initialize.mjs`, the tracer is initialized with only environment-variable-based configuration. If you need to pass programmatic options (e.g. custom plugin config), create your own init file and import it instead:
+
+```javascript
+// dd-trace-init.mjs
+import { createRequire } from 'module'
+import { pathToFileURL } from 'url'
+import { register } from 'module'
+
+const require = createRequire(import.meta.url)
+
+const tracer = require('dd-trace')
+tracer.init({
+  service: 'my-service',
+  logInjection: true,
+})
+
+register('dd-trace/loader-hook.mjs', pathToFileURL('./dd-trace-init.mjs'))
+```
+
+```bash
+node --import ./dd-trace-init.mjs server.mjs
+```
+
+## Caveats
+
+- **Not all plugins support ESM.** Plugins that rely on `require`-hook patching work transparently. Plugins that modify module-level state at import time may behave differently under ESM. Check the plugin's documentation.
+- **Node.js 18.0.0 has a known loader bug.** The `initialize.mjs` file detects `18.0` specifically and falls back to a simpler load path that avoids the broken behavior.
+- **The `--loader` flag prints an `ExperimentalWarning` in Node 18/20.** This is cosmetic and does not affect functionality. Use `--import` to avoid it.
+- **Worker threads.** The `--import` flag applies only to the main thread by default. Worker threads that load ESM independently may need their own `--import` or `workerData` initialization.

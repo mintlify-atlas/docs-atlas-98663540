@@ -1,0 +1,438 @@
+---
+title: "Web frameworks"
+description: "Automatic tracing for Express, Fastify, Koa, Hapi, Restify, Next.js, Connect, Hono, and Moleculer."
+keywords: ["express", "fastify", "koa", "hapi", "restify", "nextjs", "connect", "hono", "moleculer", "web framework tracing"]
+---
+
+# Web frameworks
+
+dd-trace automatically instruments popular Node.js web frameworks with zero code changes. Each web framework plugin creates a root span for every incoming HTTP request and child spans for middleware and route handlers.
+
+All web framework plugins are enabled by default. They share a common configuration interface derived from `HttpServer`.
+
+## Common configuration options
+
+All web framework plugins accept the following options:
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | `boolean` | `true` | Enable or disable the plugin. |
+| `service` | `string` | service name | Override the service name for spans from this plugin. |
+| `middleware` | `boolean` | `true` | Whether to create child spans for middleware functions. |
+| `headers` | `string[]` | `[]` | HTTP request and response headers to attach as span tags. |
+| `validateStatus` | `(code: number) => boolean` | `code < 500` | Function to determine whether a status code should be marked as an error. |
+| `queryStringObfuscation` | `boolean \| string \| RegExp` | — | Obfuscate query string values in `http.url`. |
+| `hooks.request` | `(span, req, res) => void` | — | Callback that runs just before the request span finishes. |
+
+Apply configuration before importing the framework:
+
+```javascript
+const tracer = require('dd-trace').init()
+
+tracer.use('express', {
+  service: 'my-api',
+  middleware: true,
+  headers: ['x-request-id', 'x-correlation-id'],
+  hooks: {
+    request: (span, req, res) => {
+      span.setTag('user.id', req.user?.id)
+    }
+  }
+})
+
+const express = require('express')
+```
+
+## Common span tags
+
+All web framework spans include:
+
+| Tag | Description |
+|---|---|
+| `http.method` | HTTP method (GET, POST, etc.) |
+| `http.url` | Full request URL |
+| `http.status_code` | HTTP response status code |
+| `http.route` | Matched route template (e.g. `/users/:id`) |
+| `resource.name` | Combination of method and route (e.g. `GET /users/:id`) |
+| `span.type` | Always `web` |
+| `component` | Plugin name (e.g. `express`) |
+
+---
+
+## Express
+
+[Express](https://expressjs.com/) is the most widely used Node.js web framework. The plugin instruments all incoming requests and creates child spans for each middleware.
+
+**npm package:** `express`
+
+### Enable
+
+Express is instrumented automatically when you import it after initializing the tracer.
+
+```javascript
+// Must be the first line of your application
+const tracer = require('dd-trace').init()
+
+const express = require('express')
+const app = express()
+
+app.get('/users/:id', async (req, res) => {
+  const user = await db.getUser(req.params.id)
+  res.json(user)
+})
+
+app.listen(3000)
+```
+
+### Configuration
+
+```javascript
+tracer.use('express', {
+  service: 'my-express-api',
+  middleware: true, // create spans for each middleware
+  headers: ['x-request-id'],
+  validateStatus: code => code < 500,
+  hooks: {
+    request: (span, req, res) => {
+      span.setTag('tenant.id', req.headers['x-tenant-id'])
+    }
+  }
+})
+```
+
+### Spans created
+
+- **`express.request`** — root span for the entire request lifecycle
+- **`express.middleware`** — child span for each middleware (when `middleware: true`)
+
+---
+
+## Fastify
+
+[Fastify](https://fastify.dev/) is a high-performance web framework built for speed. The plugin traces all requests and Fastify plugins.
+
+**npm package:** `fastify`
+
+### Enable
+
+```javascript
+const tracer = require('dd-trace').init()
+
+const Fastify = require('fastify')
+const app = Fastify()
+
+app.get('/items/:id', async (request, reply) => {
+  const item = await db.getItem(request.params.id)
+  return item
+})
+
+app.listen({ port: 3000 })
+```
+
+### Configuration
+
+```javascript
+tracer.use('fastify', {
+  service: 'my-fastify-api',
+  hooks: {
+    request: (span, req, res) => {
+      span.setTag('app.version', req.headers['x-app-version'])
+    }
+  }
+})
+```
+
+### Spans created
+
+- **`fastify.request`** — root span for each HTTP request
+- **`fastify.middleware`** — child spans for registered Fastify plugins/hooks
+
+---
+
+## Koa
+
+[Koa](https://koajs.com/) is a minimalist middleware framework from the Express team. The plugin traces requests and all Koa middleware.
+
+**npm package:** `koa`
+
+### Enable
+
+```javascript
+const tracer = require('dd-trace').init()
+
+const Koa = require('koa')
+const Router = require('@koa/router')
+
+const app = new Koa()
+const router = new Router()
+
+router.get('/orders/:id', async ctx => {
+  ctx.body = await db.getOrder(ctx.params.id)
+})
+
+app.use(router.routes())
+app.listen(3000)
+```
+
+### Configuration
+
+```javascript
+tracer.use('koa', {
+  service: 'my-koa-service',
+  middleware: true
+})
+```
+
+### Spans created
+
+- **`koa.request`** — root span for each request
+- **`koa.middleware`** — child span for each middleware
+
+---
+
+## Hapi
+
+[@hapi/hapi](https://hapi.dev/) is an enterprise-grade framework with a plugin ecosystem. The plugin traces all routes and Hapi lifecycle events.
+
+**npm package:** `@hapi/hapi`
+
+### Enable
+
+```javascript
+const tracer = require('dd-trace').init()
+
+const Hapi = require('@hapi/hapi')
+
+const server = Hapi.server({ port: 3000 })
+
+server.route({
+  method: 'GET',
+  path: '/products/{id}',
+  handler: async (request) => {
+    return db.getProduct(request.params.id)
+  }
+})
+
+await server.start()
+```
+
+### Configuration
+
+```javascript
+tracer.use('hapi', {
+  service: 'hapi-api',
+  hooks: {
+    request: (span, req, res) => {
+      span.setTag('user.role', req.auth?.credentials?.role)
+    }
+  }
+})
+```
+
+### Spans created
+
+- **`hapi.request`** — root span for each request
+- **`hapi.middleware`** — child spans for Hapi lifecycle points
+
+---
+
+## Restify
+
+[Restify](http://restify.com/) is designed for building REST APIs. The plugin instruments all registered routes.
+
+**npm package:** `restify`
+
+### Enable
+
+```javascript
+const tracer = require('dd-trace').init()
+
+const restify = require('restify')
+const server = restify.createServer()
+
+server.get('/hello/:name', (req, res, next) => {
+  res.send(`Hello, ${req.params.name}`)
+  return next()
+})
+
+server.listen(3000)
+```
+
+### Configuration
+
+```javascript
+tracer.use('restify', {
+  service: 'restify-api',
+  headers: ['x-request-id']
+})
+```
+
+### Spans created
+
+- **`restify.request`** — root span for each request
+- **`restify.middleware`** — child spans for handlers and middleware
+
+---
+
+## Next.js
+
+[Next.js](https://nextjs.org/) is a React framework for server-side rendering and static generation. The plugin traces page rendering, API routes, and App Router requests.
+
+**npm package:** `next`
+
+### Enable
+
+Add the tracer initialization to a [custom instrumentation file](https://nextjs.org/docs/app/building-your-application/optimizing/instrumentation).
+
+```javascript
+// instrumentation.js (project root)
+export async function register() {
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    const tracer = (await import('dd-trace')).default
+    tracer.init()
+  }
+}
+```
+
+### Configuration
+
+```javascript
+tracer.use('next', {
+  service: 'next-app',
+  hooks: {
+    request: (span, req, res) => {
+      span.setTag('next.page', req.url)
+    }
+  }
+})
+```
+
+### Spans created
+
+- **`next.request`** — root span for each request (Pages Router and App Router)
+
+---
+
+## Connect
+
+[Connect](https://github.com/senchalabs/connect) is a minimalist middleware framework. Many frameworks are built on top of it.
+
+**npm package:** `connect`
+
+### Enable
+
+```javascript
+const tracer = require('dd-trace').init()
+
+const connect = require('connect')
+const http = require('http')
+
+const app = connect()
+
+app.use('/hello', (req, res) => {
+  res.end('Hello World')
+})
+
+http.createServer(app).listen(3000)
+```
+
+### Configuration
+
+```javascript
+tracer.use('connect', {
+  service: 'connect-api',
+  middleware: true
+})
+```
+
+---
+
+## Hono
+
+[Hono](https://hono.dev/) is an ultrafast, lightweight web framework that runs on multiple JavaScript runtimes.
+
+**npm package:** `hono`
+
+### Enable
+
+```javascript
+const tracer = require('dd-trace').init()
+
+const { Hono } = require('hono')
+const { serve } = require('@hono/node-server')
+
+const app = new Hono()
+
+app.get('/users/:id', async c => {
+  const user = await db.getUser(c.req.param('id'))
+  return c.json(user)
+})
+
+serve({ fetch: app.fetch, port: 3000 })
+```
+
+### Configuration
+
+```javascript
+tracer.use('hono', {
+  service: 'hono-api'
+})
+```
+
+### Spans created
+
+- **`hono.request`** — root span for each request
+
+---
+
+## Moleculer
+
+[Moleculer](https://moleculer.services/) is a microservices framework for Node.js. The plugin traces both client calls and server action handlers.
+
+**npm package:** `moleculer`
+
+### Enable
+
+```javascript
+const tracer = require('dd-trace').init()
+
+const { ServiceBroker } = require('moleculer')
+
+const broker = new ServiceBroker()
+
+broker.createService({
+  name: 'greeter',
+  actions: {
+    hello: {
+      async handler(ctx) {
+        return `Hello, ${ctx.params.name}`
+      }
+    }
+  }
+})
+
+await broker.start()
+const result = await broker.call('greeter.hello', { name: 'World' })
+```
+
+### Configuration
+
+```javascript
+tracer.use('moleculer', {
+  service: 'moleculer-node',
+  meta: false, // set to true to include context meta as span tags
+  client: true, // instrument outgoing calls
+  server: true  // instrument action handlers
+})
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `meta` | `boolean` | `false` | Include Moleculer context `meta` object as span tags. |
+| `client` | `boolean \| object` | `true` | Configure or disable client instrumentation. |
+| `server` | `boolean \| object` | `true` | Configure or disable server instrumentation. |
+
+### Spans created
+
+- **`moleculer.call`** — span for each outgoing action call
+- **`moleculer.action`** — span for each incoming action handler execution

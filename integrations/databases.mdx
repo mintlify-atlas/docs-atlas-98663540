@@ -1,0 +1,603 @@
+---
+title: "Databases"
+description: "Automatic tracing for PostgreSQL, MySQL, MongoDB, Redis, Elasticsearch, Cassandra, Prisma, and more."
+keywords: ["postgres", "mysql", "mongodb", "redis", "elasticsearch", "cassandra", "prisma", "database tracing", "dbm", "database monitoring"]
+---
+
+# Databases
+
+dd-trace automatically instruments database clients to create spans for every query. Database spans include connection metadata, the query statement or command, and error information. You can also correlate traces with Database Monitoring (DBM) by enabling `dbmPropagationMode`.
+
+## Common configuration options
+
+Most database plugins accept:
+
+| Option | Type | Description |
+|---|---|---|
+| `enabled` | `boolean` | Enable or disable the plugin. |
+| `service` | `string \| (params) => string` | Override the span service name. Pass a function to derive the name dynamically from connection parameters. |
+| `dbmPropagationMode` | `'disabled' \| 'service' \| 'full'` | Inject a DBM trace comment into SQL queries to correlate traces with Database Monitoring. |
+
+## Common span tags
+
+| Tag | Description |
+|---|---|
+| `db.type` | Database type (e.g. `postgres`, `mysql`, `redis`) |
+| `db.user` | User used for the connection |
+| `db.name` | Database or schema name |
+| `db.statement` | The query or command text |
+| `out.host` | Database server hostname |
+| `out.port` | Database server port |
+| `span.type` | Always `sql` or `redis` depending on the database |
+
+---
+
+## PostgreSQL (pg)
+
+The `pg` plugin instruments the [node-postgres](https://node-postgres.com/) client for all query and pooled connection operations.
+
+**npm package:** `pg`
+
+### Configuration
+
+```javascript
+const tracer = require('dd-trace').init()
+
+tracer.use('pg', {
+  service: 'pg-primary',
+  dbmPropagationMode: 'full' // inject full trace context into SQL comments
+})
+
+const { Client } = require('pg')
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `service` | `string \| (params) => string` | — | Custom service name. |
+| `dbmPropagationMode` | `string` | `'disabled'` | DBM trace comment injection mode. |
+| `appendComment` | `boolean` | `false` | Append the DBM comment to the end of queries instead of prepending. |
+
+### Example: traced query
+
+```javascript
+const { Client } = require('pg')
+
+const client = new Client({
+  host: 'localhost',
+  database: 'mydb',
+  user: 'myuser',
+  password: 'secret',
+  port: 5432
+})
+
+await client.connect()
+
+// This query is automatically traced
+const result = await client.query('SELECT * FROM users WHERE id = $1', [42])
+```
+
+### Span tags
+
+| Tag | Value |
+|---|---|
+| `db.type` | `postgres` |
+| `db.name` | Database name from connection params |
+| `db.user` | User from connection params |
+| `out.host` | Host from connection params |
+| `out.port` | Port from connection params |
+| `resource.name` | Query text |
+
+---
+
+## MySQL
+
+The `mysql` plugin instruments the [mysql](https://github.com/mysqljs/mysql) client.
+
+**npm package:** `mysql`
+
+### Configuration
+
+```javascript
+tracer.use('mysql', {
+  service: 'mysql-main'
+})
+
+const mysql = require('mysql')
+```
+
+### Example: traced query
+
+```javascript
+const connection = mysql.createConnection({
+  host: 'localhost',
+  user: 'root',
+  database: 'myapp'
+})
+
+connection.connect()
+
+// Automatically traced
+connection.query('SELECT * FROM orders WHERE user_id = ?', [userId], (err, results) => {
+  console.log(results)
+})
+```
+
+---
+
+## MySQL2
+
+The `mysql2` plugin instruments the [mysql2](https://github.com/sidorares/node-mysql2) client, including prepared statements and promise-based APIs.
+
+**npm package:** `mysql2`
+
+### Configuration
+
+```javascript
+tracer.use('mysql2', {
+  service: 'mysql2-replica'
+})
+
+const mysql2 = require('mysql2/promise')
+```
+
+### Example: traced query
+
+```javascript
+const connection = await mysql2.createConnection({
+  host: 'localhost',
+  user: 'root',
+  database: 'myapp'
+})
+
+// Automatically traced
+const [rows] = await connection.execute('SELECT * FROM products WHERE category = ?', ['electronics'])
+```
+
+---
+
+## MongoDB
+
+The `mongodb-core` plugin instruments the MongoDB Node.js driver at its core layer, capturing all operations including find, insert, update, delete, and aggregation.
+
+**npm packages:** `mongodb`, `mongoose`
+
+### Configuration
+
+```javascript
+tracer.use('mongodb-core', {
+  service: 'mongo-cluster',
+  heartbeatEnabled: true // include heartbeat spans (default: true)
+})
+
+const { MongoClient } = require('mongodb')
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `heartbeatEnabled` | `boolean` | `true` | Instrument MongoDB heartbeat operations. |
+| `queryInResourceName` | `boolean` | `false` | Include the query contents in the span resource name. |
+
+### Example: traced query
+
+```javascript
+const client = new MongoClient('mongodb://localhost:27017')
+await client.connect()
+
+const db = client.db('myapp')
+const collection = db.collection('users')
+
+// Automatically traced
+const user = await collection.findOne({ _id: userId })
+```
+
+### Span tags
+
+| Tag | Value |
+|---|---|
+| `db.type` | `mongo` |
+| `resource.name` | Operation name (e.g. `find`) |
+| `mongodb.collection` | Collection name |
+| `out.host` | Server hostname |
+
+---
+
+## Mongoose
+
+Mongoose is automatically traced through the underlying `mongodb-core` plugin. Configure either `mongodb-core` or `mongoose`:
+
+```javascript
+tracer.use('mongoose', { service: 'mongo-cluster' })
+
+const mongoose = require('mongoose')
+```
+
+---
+
+## Redis
+
+The `redis` plugin instruments the [redis](https://github.com/NodeRedis/node_redis) client for all commands.
+
+**npm package:** `redis`
+
+### Configuration
+
+```javascript
+tracer.use('redis', {
+  service: 'redis-cache',
+  allowlist: ['get', 'set', 'del'], // only trace these commands
+  blocklist: ['ping']               // never trace these commands
+})
+
+const { createClient } = require('redis')
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `allowlist` | `string \| RegExp \| Function \| Array` | all commands | Commands to instrument. |
+| `blocklist` | `string \| RegExp \| Function \| Array` | `[]` | Commands to skip. Takes precedence over `allowlist`. |
+| `filter` | `(command: string) => boolean` | — | Custom filter function. Takes precedence over allowlist/blocklist. |
+
+### Example
+
+```javascript
+const client = createClient({ url: 'redis://localhost:6379' })
+await client.connect()
+
+// Automatically traced
+await client.set('session:abc', JSON.stringify({ userId: 42 }))
+const session = await client.get('session:abc')
+```
+
+### Span tags
+
+| Tag | Value |
+|---|---|
+| `db.type` | `redis` |
+| `resource.name` | Redis command (e.g. `GET`) |
+| `out.host` | Redis server hostname |
+
+---
+
+## ioredis
+
+The `ioredis` plugin instruments the [ioredis](https://github.com/luin/ioredis) client, including support for cluster mode, pipelines, and Lua scripts.
+
+**npm package:** `ioredis`
+
+### Configuration
+
+```javascript
+tracer.use('ioredis', {
+  service: 'redis-cluster',
+  allowlist: /^(get|set|hget|hset)$/,
+  splitByInstance: false // set to true to use connection name as service name
+})
+
+const Redis = require('ioredis')
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `allowlist` | `string \| RegExp \| Function \| Array` | all commands | Commands to instrument. |
+| `blocklist` | `string \| RegExp \| Function \| Array` | `[]` | Commands to skip. |
+| `splitByInstance` | `boolean` | `false` | Use the client connection name as the service name. |
+
+### Example
+
+```javascript
+const redis = new Redis({ host: 'localhost', port: 6379 })
+
+// Automatically traced
+await redis.hset('user:42', 'name', 'Alice', 'email', 'alice@example.com')
+const user = await redis.hgetall('user:42')
+```
+
+---
+
+## Elasticsearch
+
+The `elasticsearch` plugin instruments the [@elastic/elasticsearch](https://github.com/elastic/elasticsearch-js) client.
+
+**npm package:** `@elastic/elasticsearch`
+
+### Configuration
+
+```javascript
+tracer.use('elasticsearch', {
+  service: 'es-cluster',
+  hooks: {
+    query: (span, params) => {
+      span.setTag('es.index', params.path)
+    }
+  }
+})
+
+const { Client } = require('@elastic/elasticsearch')
+```
+
+| Option | Type | Description |
+|---|---|---|
+| `hooks.query` | `(span, params) => void` | Hook called just before the query span finishes. |
+
+### Example
+
+```javascript
+const client = new Client({ node: 'http://localhost:9200' })
+
+// Automatically traced
+const result = await client.search({
+  index: 'products',
+  query: { match: { name: 'laptop' } }
+})
+```
+
+### Span tags
+
+| Tag | Value |
+|---|---|
+| `db.type` | `elasticsearch` |
+| `resource.name` | HTTP method + path (e.g. `POST /products/_search`) |
+
+---
+
+## OpenSearch
+
+The `opensearch` plugin instruments the [@opensearch-project/opensearch](https://github.com/opensearch-project/opensearch-js) client. It shares the same interface as the `elasticsearch` plugin.
+
+**npm package:** `@opensearch-project/opensearch`
+
+```javascript
+tracer.use('opensearch', {
+  service: 'opensearch-cluster'
+})
+
+const { Client } = require('@opensearch-project/opensearch')
+```
+
+---
+
+## Cassandra
+
+The `cassandra-driver` plugin instruments the [cassandra-driver](https://github.com/datastax/nodejs-driver) DataStax client.
+
+**npm package:** `cassandra-driver`
+
+### Configuration
+
+```javascript
+tracer.use('cassandra-driver', {
+  service: 'cassandra-main'
+})
+
+const cassandra = require('cassandra-driver')
+```
+
+### Example
+
+```javascript
+const client = new cassandra.Client({
+  contactPoints: ['localhost'],
+  localDataCenter: 'datacenter1',
+  keyspace: 'mykeyspace'
+})
+
+await client.connect()
+
+// Automatically traced
+const result = await client.execute('SELECT * FROM users WHERE id = ?', [userId], { prepare: true })
+```
+
+---
+
+## CouchBase
+
+The `couchbase` plugin instruments the [couchbase](https://www.npmjs.com/package/couchbase) Node.js SDK.
+
+**npm package:** `couchbase`
+
+```javascript
+tracer.use('couchbase', {
+  service: 'couchbase-main'
+})
+
+const couchbase = require('couchbase')
+```
+
+---
+
+## MariaDB
+
+The `mariadb` plugin instruments the [mariadb](https://github.com/mariadb-corporation/mariadb-connector-nodejs) connector. It shares the same configuration interface as the `mysql` plugin.
+
+**npm package:** `mariadb`
+
+```javascript
+tracer.use('mariadb', {
+  service: 'mariadb-main'
+})
+
+const mariadb = require('mariadb')
+```
+
+### Example
+
+```javascript
+const pool = mariadb.createPool({
+  host: 'localhost',
+  user: 'root',
+  database: 'myapp'
+})
+
+const conn = await pool.getConnection()
+
+// Automatically traced
+const rows = await conn.query('SELECT * FROM orders WHERE status = ?', ['pending'])
+```
+
+---
+
+## Memcached
+
+The `memcached` plugin instruments the [memcached](https://github.com/3rd-Eden/memcached) client.
+
+**npm package:** `memcached`
+
+```javascript
+tracer.use('memcached', {
+  service: 'memcache-cluster'
+})
+
+const Memcached = require('memcached')
+```
+
+### Example
+
+```javascript
+const client = new Memcached('localhost:11211')
+
+// Automatically traced
+client.get('user:42', (err, data) => {
+  console.log(data)
+})
+```
+
+---
+
+## Prisma
+
+The `prisma` plugin instruments the [@prisma/client](https://www.prisma.io/docs/orm/prisma-client) ORM. It creates spans for both the client operations and the underlying Prisma query engine.
+
+**npm package:** `@prisma/client`
+
+### Configuration
+
+```javascript
+tracer.use('prisma', {
+  client: true, // instrument Prisma client layer (default: true)
+  engine: true  // instrument Prisma engine layer (default: true)
+})
+
+const { PrismaClient } = require('@prisma/client')
+```
+
+### Example
+
+```javascript
+const prisma = new PrismaClient()
+
+// Automatically traced
+const user = await prisma.user.findUnique({
+  where: { id: 42 }
+})
+```
+
+---
+
+## Sequelize
+
+Sequelize is traced through the underlying database plugin (e.g. `pg`, `mysql`, `mysql2`). Configure the appropriate database plugin to control tracing behavior for Sequelize queries.
+
+---
+
+## knex
+
+The `knex` plugin patches the [knex](https://knexjs.org/) query builder to maintain context propagation across async calls.
+
+**npm package:** `knex`
+
+<Note>
+The `knex` plugin does not create spans itself. It ensures that async context is correctly propagated so that database spans created by the underlying driver (e.g. `pg` or `mysql2`) appear as children of the correct parent span.
+</Note>
+
+---
+
+## OracleDB
+
+The `oracledb` plugin instruments the [oracledb](https://github.com/oracle/node-oracledb) client.
+
+**npm package:** `oracledb`
+
+### Configuration
+
+```javascript
+tracer.use('oracledb', {
+  service: 'oracle-main'
+})
+
+const oracledb = require('oracledb')
+```
+
+| Option | Type | Description |
+|---|---|---|
+| `service` | `string \| (params) => string` | Override the service name. |
+
+### Example
+
+```javascript
+const connection = await oracledb.getConnection({
+  user: 'scott',
+  password: 'tiger',
+  connectString: 'localhost/freepdb1'
+})
+
+// Automatically traced
+const result = await connection.execute('SELECT * FROM employees WHERE id = :id', { id: 100 })
+```
+
+---
+
+## Tedious (SQL Server)
+
+The `tedious` plugin instruments the [tedious](https://github.com/tediousjs/tedious/) SQL Server client used by many Node.js SQL Server libraries.
+
+**npm package:** `tedious`
+
+```javascript
+tracer.use('tedious', {
+  service: 'sqlserver-main'
+})
+
+const tedious = require('tedious')
+```
+
+---
+
+## Aerospike
+
+The `aerospike` plugin instruments the [aerospike-client-nodejs](https://github.com/aerospike/aerospike-client-nodejs) client for versions >= 3.16.2.
+
+**npm package:** `aerospike`
+
+```javascript
+tracer.use('aerospike', {
+  service: 'aerospike-main'
+})
+
+const Aerospike = require('aerospike')
+```
+
+---
+
+## Database Monitoring (DBM) integration
+
+When `dbmPropagationMode` is set on a SQL plugin (or globally via `DD_DBM_PROPAGATION_MODE`), dd-trace injects trace context as a SQL comment into every query. This links APM traces to Database Monitoring query samples.
+
+```javascript
+tracer.use('pg', {
+  dbmPropagationMode: 'full' // injects traceparent into SQL comments
+})
+```
+
+Or set it globally:
+
+```javascript
+const tracer = require('dd-trace').init({
+  dbmPropagationMode: 'full'
+})
+```
+
+| Mode | Description |
+|---|---|
+| `disabled` | No injection (default). |
+| `service` | Injects service name and environment. |
+| `full` | Injects full `traceparent` for end-to-end correlation. |

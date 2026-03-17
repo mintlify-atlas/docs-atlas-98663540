@@ -1,0 +1,145 @@
+---
+title: "Serverless & AWS Lambda"
+description: "Use dd-trace in AWS Lambda, Azure Functions, and Google Cloud Functions."
+---
+
+dd-trace works in serverless environments but you need to account for short-lived execution contexts, cold start latency, and the absence of a persistent Datadog Agent process.
+
+## AWS Lambda
+
+### Recommended: datadog-lambda-js
+
+For production Lambda workloads, Datadog recommends using the [`datadog-lambda-js`](https://github.com/DataDog/datadog-lambda-js) package. It wraps `dd-trace`, adds Lambda-specific features (enhanced metrics, X-Ray integration, flush-on-invocation), and handles the agent communication for you via the Datadog Lambda Extension.
+
+```bash
+npm install datadog-lambda-js dd-trace
+```
+
+```javascript
+const { datadog } = require('datadog-lambda-js')
+const tracer = require('dd-trace').init()
+
+async function myHandler(event, context) {
+  // your handler logic
+  return { statusCode: 200, body: 'ok' }
+}
+
+module.exports.handler = datadog(myHandler)
+```
+
+### Using dd-trace directly
+
+If you use dd-trace without `datadog-lambda-js`, dd-trace automatically detects the Lambda environment (via `AWS_LAMBDA_FUNCTION_NAME`) and adjusts its behavior:
+
+- The `IS_SERVERLESS` flag disables the in-memory service discovery feature that stores config to a `memfd`.
+- The Lambda instrumentation hook (`packages/dd-trace/src/lambda/`) registers via `ritm` to intercept the Lambda runtime.
+
+**Initialize at module scope**, not inside the handler, so the tracer is ready before the first invocation:
+
+```javascript
+// handler.js
+'use strict'
+
+// Initialize once per cold start
+const tracer = require('dd-trace').init({
+  service: process.env.AWS_LAMBDA_FUNCTION_NAME,
+  env: process.env.DD_ENV || 'production',
+})
+
+exports.handler = async (event, context) => {
+  return tracer.trace('lambda.handler', async (span) => {
+    span.setTag('request.id', context.awsRequestId)
+    // handler logic
+    return { statusCode: 200 }
+  })
+}
+```
+
+### Timeout detection
+
+The built-in Lambda handler (`packages/dd-trace/src/lambda/handler.js`) monitors invocation time and publishes to an `apm:aws:lambda:timeout` channel shortly before the function times out. When triggered, it tags the active span with the error and forces a flush so data isn't lost.
+
+You can control the flush deadline:
+
+```bash
+# How many milliseconds before timeout to trigger the flush (default: 100)
+DD_APM_FLUSH_DEADLINE_MILLISECONDS=150
+```
+
+### Agent URL configuration
+
+In Lambda you send traces to the Datadog Lambda Extension running as a sidecar, not a remote Agent:
+
+```bash
+DD_TRACE_AGENT_URL=http://127.0.0.1:8126
+```
+
+If you're using the Datadog Forwarder instead of the Extension, configure the appropriate endpoint for your setup.
+
+## Azure Functions
+
+dd-trace detects Azure Functions environments via the `FUNCTIONS_EXTENSION_VERSION` and `FUNCTIONS_WORKER_RUNTIME` environment variables. The `azure-functions` plugin is enabled automatically.
+
+```javascript
+// Initialize before registering functions
+const tracer = require('dd-trace').init()
+const { app } = require('@azure/functions')
+
+app.http('httpTrigger', {
+  methods: ['GET', 'POST'],
+  handler: async (request, context) => {
+    const span = tracer.scope().active()
+    span?.setTag('function.invocation_id', context.invocationId)
+    return { body: 'hello' }
+  },
+})
+```
+
+### Flex Consumption plan
+
+The library specifically detects the Azure Flex Consumption plan (`WEBSITE_SKU === 'FlexConsumption'`) and applies additional tuning.
+
+## Google Cloud Functions
+
+dd-trace detects GCP Functions via environment variables:
+
+- **1st gen:** `FUNCTION_NAME` + `GCP_PROJECT`
+- **2nd gen / Cloud Run:** `K_SERVICE` + `FUNCTION_TARGET`
+
+```javascript
+const tracer = require('dd-trace').init()
+
+exports.myFunction = async (req, res) => {
+  await tracer.trace('gcf.handler', async (span) => {
+    span.setTag('http.method', req.method)
+    // handler logic
+  })
+  res.status(200).send('ok')
+}
+```
+
+### GCP Pub/Sub push subscriptions
+
+On Cloud Run (`K_SERVICE` present), Pub/Sub PUSH subscription tracing is enabled by default. Disable it with:
+
+```bash
+DD_TRACE_GCP_PUBSUB_PUSH_ENABLED=false
+```
+
+## General serverless guidance
+
+<Note>
+In all serverless environments, ensure the Datadog Agent or its extension is reachable. Without a running Agent (or the Lambda Extension), traces are queued and eventually dropped.
+</Note>
+
+- **Cold starts:** Initialize `dd-trace` at module scope so the cost is paid once per cold start, not per invocation.
+- **Flushing:** Serverless runtimes terminate the process after the invocation completes. If traces aren't flushed before termination, they're lost. `datadog-lambda-js` handles this; if using dd-trace directly, consider calling `tracer.dogstatsd?.flush()` or rely on the Extension's periodic flush.
+- **Disable unused plugins:** Loading only the plugins you need reduces initialization time on cold starts:
+  ```javascript
+  require('dd-trace').init({
+    plugins: false, // disable all auto-instrumentation
+  })
+  // Enable only what you need:
+  tracer.use('http')
+  tracer.use('aws-sdk')
+  ```

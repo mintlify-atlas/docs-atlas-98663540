@@ -1,0 +1,194 @@
+---
+title: "Sampling"
+description: "Learn how dd-trace controls the volume of traces sent to Datadog using priority sampling, sampling rules, and rate limits."
+---
+
+## Why sampling exists
+
+At high request volume, sending every trace to Datadog would be prohibitively expensive. Sampling lets you control the fraction of traces that are retained without losing visibility into errors or slow requests.
+
+dd-trace uses **head-based sampling** by default: the sampling decision is made at the root span and propagated to all services in the trace, ensuring that a trace is either fully collected or fully dropped.
+
+## How sampling decisions are made
+
+The `PrioritySampler` evaluates each trace in this order:
+
+1. **Manual override** — if the span has a `manual.keep` or `manual.drop` tag, that wins.
+2. **Sampling rules** — the first rule whose `service` and `name` patterns match the root span is applied.
+3. **Agent rates** — if no rule matches, rates received from the Datadog Agent are used.
+4. **Default** — if no agent rates are available, the trace is kept (`AUTO_KEEP`).
+
+## Priority values
+
+dd-trace uses four integer priorities:
+
+| Constant | Value | Meaning |
+|----------|-------|---------|
+| `AUTO_REJECT` | `-1` | Automatically dropped — do not ingest |
+| `AUTO_KEEP` | `0` | Automatically kept |
+| `USER_REJECT` | `1` | Explicitly dropped by user code |
+| `USER_KEEP` | `2` | Explicitly kept by user code |
+
+<Note>
+  `USER_KEEP` and `USER_REJECT` override agent-level decisions. Use them to force-keep important traces (e.g. those containing errors) or to drop known noise.
+</Note>
+
+Priority is stored on the trace and propagated to downstream services via the `x-datadog-sampling-priority` header (or equivalent in other propagation formats).
+
+## Configuring the sample rate
+
+Set a global default sample rate between 0 and 1:
+
+```javascript
+const tracer = require('dd-trace').init({
+  sampleRate: 0.5 // Keep 50% of traces
+})
+```
+
+Or via the environment:
+
+```bash
+DD_TRACE_SAMPLE_RATE=0.5 node app.js
+```
+
+## Sampling rules
+
+Sampling rules let you apply different rates to specific services and operation names. Rules are evaluated in order; the first match wins.
+
+```typescript
+interface SamplingRule {
+  /** Sampling rate for this rule (0–1). */
+  sampleRate: number;
+  /** Match on service name. Glob patterns and RegExp are supported. */
+  service?: string | RegExp;
+  /** Match on operation name. Glob patterns and RegExp are supported. */
+  name?: string | RegExp;
+}
+```
+
+Configure rules programmatically:
+
+```javascript
+const tracer = require('dd-trace').init({
+  samplingRules: [
+    // Keep all traces for the payments service
+    { service: 'payments', sampleRate: 1.0 },
+    // Sample 10% of database spans in any service
+    { name: 'pg.query', sampleRate: 0.1 },
+    // Drop health check endpoints
+    { service: 'my-api', name: 'web.request', resource: '/health', sampleRate: 0 },
+  ]
+})
+```
+
+Or via environment variable (JSON array):
+
+```bash
+DD_TRACE_SAMPLING_RULES='[{"service":"payments","sample_rate":1.0}]' node app.js
+```
+
+### Pattern matching
+
+Rule patterns support:
+
+- **Exact strings** — `"payments"` matches only `payments`
+- **Glob patterns** — `"payment*"` matches `payments`, `payment-service`, etc.
+- **RegExp** — pass a `RegExp` object when configuring programmatically
+- **Wildcard** — omit the field entirely (or use `"*"`) to match any value
+
+From `sampling_rule.js`, the matching logic:
+
+```javascript
+// Glob pattern matching
+if (typeof pattern === 'string' && pattern !== '*' && pattern !== '**') {
+  return new GlobMatcher(pattern, locator)
+}
+// Wildcard — always matches
+return new AlwaysMatcher()
+```
+
+## Rate limiting
+
+Even when a trace matches a sampling rule, a rate limiter caps the number of traces sampled per second to prevent bursts from overwhelming the pipeline.
+
+```typescript
+interface TracerOptions {
+  /**
+   * Global rate limit for rule-matched traces (traces per second).
+   * Defaults to deferring the decision to the agent.
+   * @env DD_TRACE_RATE_LIMIT
+   */
+  rateLimit?: number;
+}
+```
+
+Default: 100 traces per second. Set it higher or lower depending on your traffic:
+
+```javascript
+const tracer = require('dd-trace').init({
+  sampleRate: 1.0,
+  rateLimit: 200 // Allow up to 200 sampled traces per second
+})
+```
+
+<Tip>
+  Set `rateLimit` to `-1` to disable the rate limiter entirely and rely only on `sampleRate`.
+</Tip>
+
+## Span sampling rules
+
+Span sampling rules allow individual spans to be ingested even when the enclosing trace is dropped. This is useful for keeping database query data without retaining every trace.
+
+```typescript
+interface SpanSamplingRule {
+  /** Sampling rate (0–1). Defaults to 1.0. */
+  sampleRate?: number;
+  /** Maximum spans per second matching this rule. */
+  maxPerSecond?: number;
+  /** Service name or glob pattern. */
+  service?: string;
+  /** Operation name or glob pattern. */
+  name?: string;
+}
+```
+
+Configure in code:
+
+```javascript
+const tracer = require('dd-trace').init({
+  spanSamplingRules: [
+    {
+      service: 'my-api',
+      name: 'pg.query',
+      sampleRate: 1.0,   // Always keep matched spans
+      maxPerSecond: 50,  // But cap at 50 per second
+    }
+  ]
+})
+```
+
+Or via environment:
+
+```bash
+DD_SPAN_SAMPLING_RULES='[{"service":"my-api","name":"pg.query","sample_rate":1.0,"max_per_second":50}]' node app.js
+```
+
+## Manual sampling control
+
+You can force a sampling decision on any span using tags:
+
+```javascript
+const { MANUAL_KEEP, MANUAL_DROP } = require('dd-trace/ext/tags')
+
+tracer.trace('web.request', (span) => {
+  if (isImportantRequest(req)) {
+    span.setTag(MANUAL_KEEP, true) // Force keep this trace
+  } else if (isHealthCheck(req)) {
+    span.setTag(MANUAL_DROP, true) // Force drop this trace
+  }
+})
+```
+
+<Warning>
+  Manual keep/drop tags affect the entire trace, not just the span they are set on. Setting `MANUAL_KEEP` on a child span overrides any automatic sampling decision for the whole trace.
+</Warning>
